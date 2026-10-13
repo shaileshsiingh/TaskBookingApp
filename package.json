@@ -1,0 +1,25 @@
+{
+  "name": "task-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "mobile": "npm run start --workspace @task-platform/mobile",
+    "mobile:android": "npm run android --workspace @task-platform/mobile",
+    "mobile:ios": "npm run ios --workspace @task-platform/mobile",
+    "mobile:typecheck": "npm run typecheck --workspace @task-platform/mobile",
+    "api:dev": "npm run start:dev --workspace @task-platform/api",
+    "api:build": "npm run build --workspace @task-platform/api",
+    "api:test": "npm run test --workspace @task-platform/api",
+    "admin": "npm run dev --workspace @task-platform/admin -- --port 3001",
+    "admin:build": "npm run build --workspace @task-platform/admin",
+    "db:generate": "npm run db:generate --workspace @task-platform/api",
+    "db:migrate": "npm run db:migrate --workspace @task-platform/api"
+  },
+  "dependencies": {
+    "@neon/config": "^1.8.6",
+    "@neon/env": "^1.5.3"
+  }
+}

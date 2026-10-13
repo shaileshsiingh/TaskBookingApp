@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+
+enum UserRole {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum PricingModel {
+  FIXED
+  HOURLY
+  PER_PERSON
+  DURATION_BASED
+  DISTANCE_BASED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  ASSIGNED
+  ACCEPTED
+  ON_THE_WAY
+  ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+  FAILED
+  REASSIGNMENT_REQUIRED
+  PARTIALLY_ASSIGNED
+  PARTIALLY_COMPLETED
+  DISPUTED
+  REFUNDED
+}
+
+enum AssignmentStatus {
+  OFFERED
+  ACCEPTED
+  REJECTED
+  ON_THE_WAY
+  ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+  REPLACEMENT_REQUIRED
+}
+
+model User {
+  id                  String           @id @default(cuid())
+  role                UserRole
+  name                String
+  phone               String           @unique
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  providerProfile     ProviderProfile?
+  customerOrders      Order[]          @relation("CustomerOrders")
+  providerAssignments Assignment[]     @relation("ProviderAssignments")
+}
+
+model ProviderProfile {
+  id          String          @id @default(cuid())
+  userId      String          @unique
+  verified    Boolean         @default(false)
+  serviceArea String?
+  user        User            @relation(fields: [userId], references: [id])
+  skills      ProviderSkill[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  active    Boolean   @default(true)
+  services  Service[]
+  createdAt DateTime  @default(now())
+}
+
+model Service {
+  id             String         @id @default(cuid())
+  categoryId     String
+  name           String
+  description    String?
+  pricingModel   PricingModel
+  unitPricePaise Int
+  active         Boolean        @default(true)
+  category       Category       @relation(fields: [categoryId], references: [id])
+  providerSkills ProviderSkill[]
+  requirements   Requirement[]
+}
+
+model ProviderSkill {
+  providerProfileId String
+  serviceId         String
+  providerProfile   ProviderProfile @relation(fields: [providerProfileId], references: [id], onDelete: Cascade)
+  service           Service         @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([providerProfileId, serviceId])
+  @@index([serviceId])
+}
+
+model Order {
+  id              String       @id @default(cuid())
+  customerId      String
+  status          OrderStatus  @default(PENDING)
+  scheduledAt     DateTime
+  durationMinutes Int?
+  address         String
+  instructions    String?
+  currency        String       @default("INR")
+  totalAmountPaise Int?
+  customer        User         @relation("CustomerOrders", fields: [customerId], references: [id])
+  requirements    Requirement[]
+  assignments     Assignment[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+model Requirement {
+  id          String       @id @default(cuid())
+  orderId     String
+  serviceId   String
+  quantity    Int
+  notes       String?
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  service     Service      @relation(fields: [serviceId], references: [id])
+  assignments Assignment[]
+}
+
+model Assignment {
+  id            String           @id @default(cuid())
+  orderId       String
+  requirementId String
+  providerId    String
+  status        AssignmentStatus @default(OFFERED)
+  offeredAt     DateTime         @default(now())
+  acceptedAt    DateTime?
+  completedAt   DateTime?
+  order         Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requirement   Requirement      @relation(fields: [requirementId], references: [id])
+  provider      User             @relation("ProviderAssignments", fields: [providerId], references: [id])
+
+  @@index([orderId, status])
+  @@index([providerId, status])
+}
