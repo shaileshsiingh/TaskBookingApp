@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
@@ -57,11 +57,75 @@ model User {
   role                UserRole
   name                String
   phone               String           @unique
+  authUserId          String?          @unique
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
+  authIdentity        AuthUser?        @relation(fields: [authUserId], references: [id], onDelete: SetNull)
   providerProfile     ProviderProfile?
   customerOrders      Order[]          @relation("CustomerOrders")
   providerAssignments Assignment[]     @relation("ProviderAssignments")
+  reviewsGiven        ProviderReview[] @relation("CustomerReviews")
+  reviewsReceived     ProviderReview[] @relation("ProviderReviews")
+}
+
+model AuthUser {
+  id                  String        @id
+  name                String
+  email               String        @unique
+  emailVerified       Boolean       @default(false)
+  image               String?
+  phoneNumber         String?       @unique
+  phoneNumberVerified Boolean       @default(false)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  sessions            AuthSession[]
+  accounts            AuthAccount[]
+  applicationUser     User?
+}
+
+model AuthSession {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuthAccount {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  AuthUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model AuthVerification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
 }
 
 model ProviderProfile {
@@ -82,14 +146,14 @@ model Category {
 }
 
 model Service {
-  id             String         @id @default(cuid())
+  id             String          @id @default(cuid())
   categoryId     String
   name           String
   description    String?
   pricingModel   PricingModel
   unitPricePaise Int
-  active         Boolean        @default(true)
-  category       Category       @relation(fields: [categoryId], references: [id])
+  active         Boolean         @default(true)
+  category       Category        @relation(fields: [categoryId], references: [id])
   providerSkills ProviderSkill[]
   requirements   Requirement[]
 }
@@ -105,20 +169,20 @@ model ProviderSkill {
 }
 
 model Order {
-  id              String       @id @default(cuid())
-  customerId      String
-  status          OrderStatus  @default(PENDING)
-  scheduledAt     DateTime
-  durationMinutes Int?
-  address         String
-  instructions    String?
-  currency        String       @default("INR")
+  id               String        @id @default(cuid())
+  customerId       String
+  status           OrderStatus   @default(PENDING)
+  scheduledAt      DateTime
+  durationMinutes  Int?
+  address          String
+  instructions     String?
+  currency         String        @default("INR")
   totalAmountPaise Int?
-  customer        User         @relation("CustomerOrders", fields: [customerId], references: [id])
-  requirements    Requirement[]
-  assignments     Assignment[]
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  customer         User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  requirements     Requirement[]
+  assignments      Assignment[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 }
 
 model Requirement {
@@ -133,18 +197,36 @@ model Requirement {
 }
 
 model Assignment {
-  id            String           @id @default(cuid())
-  orderId       String
-  requirementId String
-  providerId    String
-  status        AssignmentStatus @default(OFFERED)
-  offeredAt     DateTime         @default(now())
-  acceptedAt    DateTime?
-  completedAt   DateTime?
-  order         Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  requirement   Requirement      @relation(fields: [requirementId], references: [id])
-  provider      User             @relation("ProviderAssignments", fields: [providerId], references: [id])
+  id                  String           @id @default(cuid())
+  orderId             String
+  requirementId       String
+  providerId          String
+  status              AssignmentStatus @default(OFFERED)
+  offeredAt           DateTime         @default(now())
+  acceptedAt          DateTime?
+  completedAt         DateTime?
+  customerConfirmedAt DateTime?
+  order               Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requirement         Requirement      @relation(fields: [requirementId], references: [id])
+  provider            User             @relation("ProviderAssignments", fields: [providerId], references: [id])
+  review              ProviderReview?
 
   @@index([orderId, status])
   @@index([providerId, status])
+}
+
+model ProviderReview {
+  id           String     @id @default(cuid())
+  assignmentId String     @unique
+  customerId   String
+  providerId   String
+  rating       Int
+  comment      String?    @db.VarChar(500)
+  createdAt    DateTime   @default(now())
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  customer     User       @relation("CustomerReviews", fields: [customerId], references: [id])
+  provider     User       @relation("ProviderReviews", fields: [providerId], references: [id])
+
+  @@index([providerId, createdAt])
+  @@index([customerId, createdAt])
 }

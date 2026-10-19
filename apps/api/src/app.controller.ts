@@ -1,10 +1,26 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { UserRole } from '@prisma/client';
 import { AdminApiKeyGuard } from './admin-api-key.guard.js';
 import { AppService } from './app.service.js';
+import { AuthService } from './auth.service.js';
 
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get('health')
   getHealth() {
@@ -35,8 +51,80 @@ export class AppController {
   }
 
   @Post('bookings')
-  createBooking(@Body() bookingInput: Record<string, unknown>) {
-    return this.appService.createBooking(bookingInput);
+  async createBooking(
+    @Req() request: Request,
+    @Body() bookingInput: Record<string, unknown>,
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can create bookings.');
+    }
+    return this.appService.createBooking({
+      ...bookingInput,
+      customerName: user.name,
+      customerPhone: user.phone,
+    });
+  }
+
+  @Get('customer/bookings')
+  async getCustomerBookings(@Req() request: Request) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can view their bookings.');
+    }
+    return this.appService.getCustomerBookings(user.id);
+  }
+
+  @Patch('customer/assignments/:id/confirmation')
+  async confirmCustomerAssignment(
+    @Req() request: Request,
+    @Param('id') id: string,
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can confirm job completion.');
+    }
+    return this.appService.confirmCustomerAssignment(user.id, id);
+  }
+
+  @Post('customer/assignments/:id/review')
+  async createProviderReview(
+    @Req() request: Request,
+    @Param('id') id: string,
+    @Body() input: { rating?: unknown; comment?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can rate providers.');
+    }
+    return this.appService.createProviderReview(
+      user.id,
+      id,
+      input.rating,
+      input.comment,
+    );
+  }
+
+  @Get('provider/assignments')
+  async getProviderAssignments(@Req() request: Request) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.PROVIDER) {
+      throw new ForbiddenException('Only provider accounts can view assigned jobs.');
+    }
+    return this.appService.getProviderAssignments(user.id);
+  }
+
+  @Patch('provider/assignments/:id/status')
+  async updateProviderAssignment(
+    @Req() request: Request,
+    @Param('id') id: string,
+    @Body() input: { status?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.PROVIDER) {
+      throw new ForbiddenException('Only provider accounts can update assigned jobs.');
+    }
+    return this.appService.updateProviderAssignment(user.id, id, input.status);
   }
 
   @Get('providers')

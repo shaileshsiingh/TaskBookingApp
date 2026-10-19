@@ -11,6 +11,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import AuthScreen, { AuthProfileInput } from './AuthScreen';
+import CustomerBookingsScreen from './CustomerBookingsScreen';
+import ProviderJobsScreen from './ProviderJobsScreen';
+import ProviderStatusScreen from './ProviderStatusScreen';
+import { apiBaseUrl, fetchJson } from './lib/api';
+import { authClient } from './lib/auth-client';
 
 const timeSlots = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM'];
 const maximumPeople = 20;
@@ -29,43 +35,30 @@ type BookingResponse = {
   id: string;
 };
 
-const getApiBaseUrl = () => {
-  const configuredUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
-  if (configuredUrl) return configuredUrl;
-
-  return Platform.select({
-    ios: 'http://localhost:3000/api',
-    android: 'http://10.0.2.2:3000/api',
-    default: 'http://localhost:3000/api',
-  }) ?? 'http://localhost:3000/api';
+type CurrentUser = {
+  id: string;
+  role: 'CUSTOMER' | 'PROVIDER' | 'ADMIN';
+  name: string;
+  phone: string;
+  providerVerified: boolean;
 };
 
 const formatPrice = (amount: number) => `₹${amount.toLocaleString('en-IN')}`;
 
-async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    let message = `Request failed (${response.status}).`;
-    try {
-      const parsed: { message?: string | string[] } = JSON.parse(body);
-      message = Array.isArray(parsed.message)
-        ? parsed.message.join(' ')
-        : parsed.message || message;
-    } catch {
-      message = `Request failed (${response.status}).`;
-    }
-    throw new Error(message);
+async function syncCurrentUser(input?: Partial<AuthProfileInput>) {
+  const cookie = await authClient.getCookie();
+  if (!cookie) {
+    throw new Error('Your sign-in session was not saved. Please try again.');
   }
 
-  return (await response.json()) as T;
+  return fetchJson<CurrentUser>(`${apiBaseUrl}/me`, {
+    method: input ? 'POST' : 'GET',
+    headers: {
+      cookie,
+      ...(input ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(input ? { body: JSON.stringify(input) } : {}),
+  });
 }
 
 function getDateOptions() {
@@ -91,6 +84,10 @@ function formatDate(value: string) {
 
 export default function App() {
   const [step, setStep] = useState(0);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [showCustomerBookings, setShowCustomerBookings] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [authError, setAuthError] = useState('');
   const [availableServices, setAvailableServices] = useState<Service[]>([]);
   const [service, setService] = useState<Service | null>(null);
   const [isLoadingServices, setIsLoadingServices] = useState(true);
@@ -109,6 +106,67 @@ export default function App() {
   const [lastBookingId, setLastBookingId] = useState<string | null>(null);
   const total = (service?.price ?? 0) * people * hours;
   const connectionLabel = isLoadingServices ? 'CONNECTING' : isApiConnected ? 'LIVE' : 'OFFLINE';
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const restoreSession = async () => {
+      try {
+        const { data, error: sessionError } = await authClient.getSession();
+        if (sessionError) throw new Error(sessionError.message);
+        if (!data?.session) return;
+
+        const user = await syncCurrentUser();
+        if (isMounted) {
+          setCurrentUser(user);
+          setCustomerName(user.name);
+          setCustomerPhone(user.phone);
+        }
+      } catch (restoreError) {
+        if (isMounted) {
+          setAuthError(
+            restoreError instanceof Error
+              ? restoreError.message
+              : 'Could not restore your sign-in session.',
+          );
+        }
+      } finally {
+        if (isMounted) setIsCheckingAuth(false);
+      }
+    };
+
+    void restoreSession();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const completeSignIn = async (input?: AuthProfileInput) => {
+    const user = await syncCurrentUser(input);
+    setCurrentUser(user);
+    setCustomerName(user.name);
+    setCustomerPhone(user.phone);
+    setAuthError('');
+  };
+
+  const signOut = async () => {
+    try {
+      const { error: signOutError } = await authClient.signOut();
+      if (signOutError) throw new Error(signOutError.message);
+      setCurrentUser(null);
+      setShowCustomerBookings(false);
+      setAuthError('');
+      setCustomerName('');
+      setCustomerPhone('');
+      setStep(0);
+    } catch (signOutError) {
+      setAuthError(
+        signOutError instanceof Error
+          ? signOutError.message
+          : 'Could not sign out. Please try again.',
+      );
+    }
+  };
 
   const goBack = () => {
     setError('');
@@ -131,7 +189,7 @@ export default function App() {
 
     const loadServices = async () => {
       try {
-        const response = await fetchJson<Service[]>(`${getApiBaseUrl()}/services`);
+        const response = await fetchJson<Service[]>(`${apiBaseUrl}/services`);
         if (isMounted) {
           setIsApiConnected(true);
           if (response.length === 0) {
@@ -171,6 +229,10 @@ export default function App() {
   };
 
   const confirmRequest = async () => {
+    if (!currentUser || currentUser.role !== 'CUSTOMER') {
+      setError('Sign in with a customer account to place a booking.');
+      return;
+    }
     if (!service) {
       setError('Choose an available service before placing your booking.');
       return;
@@ -179,10 +241,15 @@ export default function App() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetchJson<BookingResponse>(`${getApiBaseUrl()}/bookings`, {
+      const cookie = await authClient.getCookie();
+      if (!cookie) {
+        throw new Error('Your sign-in session expired. Please sign in again.');
+      }
+      const response = await fetchJson<BookingResponse>(`${apiBaseUrl}/bookings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          cookie,
         },
         body: JSON.stringify({
           customerName,
@@ -211,8 +278,8 @@ export default function App() {
     setService(availableServices[0] ?? null);
     setPeople(1);
     setHours(2);
-    setCustomerName('');
-    setCustomerPhone('');
+    setCustomerName(currentUser?.name ?? '');
+    setCustomerPhone(currentUser?.phone ?? '');
     setDate('');
     setTime('');
     setAddress('');
@@ -220,6 +287,55 @@ export default function App() {
     setError('');
     setLastBookingId(null);
   };
+
+  if (isCheckingAuth) {
+    return (
+      <View style={styles.authLoading}>
+        <StatusBar style="dark" />
+        <Text style={styles.authLoadingText}>Checking your sign-in…</Text>
+      </View>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <AuthScreen
+        initialError={authError}
+        onAuthenticated={completeSignIn}
+      />
+    );
+  }
+
+  if (currentUser.role === 'PROVIDER') {
+    if (currentUser.providerVerified) {
+      return (
+        <ProviderJobsScreen
+          error={authError}
+          name={currentUser.name}
+          onSignOut={() => void signOut()}
+        />
+      );
+    }
+
+    if (showCustomerBookings) {
+      return (
+        <CustomerBookingsScreen
+          error={authError}
+          name={currentUser.name}
+          onBack={() => setShowCustomerBookings(false)}
+        />
+      );
+    }
+
+    return (
+      <ProviderStatusScreen
+        error={authError}
+        name={currentUser.name}
+        verified={currentUser.providerVerified}
+        onSignOut={() => void signOut()}
+      />
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -254,7 +370,29 @@ export default function App() {
             <View style={[styles.connectionDot, !isApiConnected && !isLoadingServices && styles.connectionDotOffline]} />
             <Text style={styles.connectionText}>{connectionLabel}</Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void signOut()}
+            style={styles.signOutButton}
+          >
+            <Text style={styles.signOutText}>Sign out</Text>
+          </Pressable>
         </View>
+        {authError ? (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {authError}
+          </Text>
+        ) : null}
+
+        {step === 0 ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowCustomerBookings(true)}
+            style={styles.myBookingsLink}
+          >
+            <Text style={styles.myBookingsText}>View my bookings ›</Text>
+          </Pressable>
+        ) : null}
 
         {step < 3 ? (
           <View style={styles.progressRow}>
@@ -327,7 +465,7 @@ export default function App() {
               <TextInput
                 accessibilityLabel="Your name"
                 autoCapitalize="words"
-                onChangeText={(value) => { setCustomerName(value); setError(''); }}
+                onChangeText={(value: string) => { setCustomerName(value); setError(''); }}
                 placeholder="Full name"
                 placeholderTextColor="#9aa39a"
                 style={styles.input}
@@ -335,9 +473,9 @@ export default function App() {
               />
               <TextInput
                 accessibilityLabel="Phone number"
+                editable={false}
                 keyboardType="phone-pad"
                 maxLength={14}
-                onChangeText={(value) => { setCustomerPhone(value); setError(''); }}
                 placeholder="10-digit mobile number"
                 placeholderTextColor="#9aa39a"
                 style={[styles.input, styles.phoneInput]}
@@ -557,6 +695,13 @@ export default function App() {
                 <Text style={styles.estimateAmount}>{formatPrice(total)}</Text>
               </View>
             </View>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowCustomerBookings(true)}
+              style={styles.confirmationBookingsLink}
+            >
+              <Text style={styles.myBookingsText}>View my bookings ›</Text>
+            </Pressable>
             <PrimaryButton label="Start a new request" onPress={startAgain} />
             <Text style={styles.disclaimer}>Preview only · Nothing was sent or charged.</Text>
           </View>
@@ -617,6 +762,11 @@ function PrimaryButton({ label, onPress, disabled = false }: { label: string; on
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#f5f6f1' },
+  authLoading: { alignItems: 'center', backgroundColor: '#f5f6f1', flex: 1, justifyContent: 'center' },
+  authLoadingText: { color: '#6c796e', fontSize: 13 },
+  myBookingsLink: { alignSelf: 'flex-end', marginTop: 12, paddingVertical: 4 },
+  myBookingsText: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
+  confirmationBookingsLink: { alignSelf: 'center', marginBottom: 8, padding: 10 },
   content: { flexGrow: 1, paddingHorizontal: 21, paddingTop: 52, paddingBottom: 36 },
   topBar: { alignItems: 'center', flexDirection: 'row', marginBottom: 27 },
   brandMark: { alignItems: 'center', backgroundColor: '#244c38', borderRadius: 11, height: 39, justifyContent: 'center', marginRight: 10, width: 39 },
@@ -624,6 +774,8 @@ const styles = StyleSheet.create({
   brandName: { color: '#1b3024', fontSize: 15, fontWeight: '700', letterSpacing: 0.1 },
   brandCaption: { color: '#8a958a', fontSize: 8, fontWeight: '700', letterSpacing: 1.3, marginTop: 3 },
   connectionBadge: { alignItems: 'center', backgroundColor: '#e9eee6', borderRadius: 20, flexDirection: 'row', marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 7 },
+  signOutButton: { marginLeft: 8, paddingHorizontal: 4, paddingVertical: 6 },
+  signOutText: { color: '#557454', fontSize: 9, fontWeight: '700' },
   connectionDot: { backgroundColor: '#6e936a', borderRadius: 4, height: 7, marginRight: 6, width: 7 },
   connectionDotOffline: { backgroundColor: '#bd6b54' },
   connectionText: { color: '#557052', fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },

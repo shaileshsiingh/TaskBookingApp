@@ -1,12 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { OrderStatus, UserRole } from '@prisma/client';
+import { AssignmentStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from './prisma.service.js';
 
 type BookingInput = {
@@ -184,6 +185,156 @@ export class AppService {
     });
   }
 
+  async getCustomerBookings(customerId: string) {
+    const bookings = await this.prisma.order.findMany({
+      where: { customerId },
+      orderBy: [{ scheduledAt: 'desc' }, { createdAt: 'desc' }],
+      include: {
+        requirements: {
+          include: { service: { select: { name: true } } },
+        },
+        assignments: {
+          orderBy: { offeredAt: 'asc' },
+          include: {
+            provider: { select: { name: true } },
+            review: { select: { rating: true, comment: true } },
+          },
+        },
+      },
+    });
+
+    return bookings.map((booking) => {
+      const requirement = booking.requirements[0];
+      const dateTime = formatIndiaDateTime(booking.scheduledAt);
+      return {
+        id: booking.id,
+        serviceName: requirement?.service.name ?? 'Service request',
+        people: requirement?.quantity ?? 1,
+        hours: booking.durationMinutes ? booking.durationMinutes / 60 : 1,
+        date: dateTime.date,
+        time: dateTime.time,
+        address: booking.address,
+        instructions: booking.instructions ?? undefined,
+        estimatedTotal: (booking.totalAmountPaise ?? 0) / 100,
+        status: statusLabels[booking.status],
+        assignments: booking.assignments.map((assignment) => ({
+          id: assignment.id,
+          providerName: assignment.provider.name,
+          status: assignment.status.toLowerCase(),
+          customerConfirmed: assignment.customerConfirmedAt !== null,
+          review: assignment.review,
+        })),
+      };
+    });
+  }
+
+  async confirmCustomerAssignment(customerId: string, assignmentId: string) {
+    return this.prisma.$transaction(async (transaction) => {
+      const assignment = await transaction.assignment.findFirst({
+        where: { id: assignmentId, order: { customerId } },
+        select: {
+          id: true,
+          status: true,
+          customerConfirmedAt: true,
+        },
+      });
+      if (!assignment) {
+        throw new NotFoundException('Booking assignment was not found.');
+      }
+      if (assignment.status !== AssignmentStatus.COMPLETED) {
+        throw new BadRequestException(
+          'You can confirm completion after the provider marks the job complete.',
+        );
+      }
+      if (assignment.customerConfirmedAt) {
+        return { id: assignment.id, customerConfirmed: true };
+      }
+
+      await transaction.assignment.update({
+        where: { id: assignment.id },
+        data: { customerConfirmedAt: new Date() },
+      });
+      return { id: assignment.id, customerConfirmed: true };
+    });
+  }
+
+  async createProviderReview(
+    customerId: string,
+    assignmentId: string,
+    ratingInput: unknown,
+    commentInput: unknown,
+  ) {
+    if (
+      typeof ratingInput !== 'number' ||
+      !Number.isInteger(ratingInput) ||
+      ratingInput < 1 ||
+      ratingInput > 5
+    ) {
+      throw new BadRequestException('rating must be a whole number from 1 to 5.');
+    }
+    const comment =
+      typeof commentInput === 'string' ? commentInput.trim() : '';
+    if (comment.length > 500) {
+      throw new BadRequestException('comment must be 500 characters or fewer.');
+    }
+
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const assignment = await transaction.assignment.findFirst({
+          where: { id: assignmentId, order: { customerId } },
+          select: {
+            id: true,
+            providerId: true,
+            status: true,
+            customerConfirmedAt: true,
+            review: { select: { id: true } },
+          },
+        });
+        if (!assignment) {
+          throw new NotFoundException('Booking assignment was not found.');
+        }
+        if (
+          assignment.status !== AssignmentStatus.COMPLETED ||
+          !assignment.customerConfirmedAt
+        ) {
+          throw new BadRequestException(
+            'Confirm the completed job before rating the provider.',
+          );
+        }
+        if (assignment.review) {
+          throw new ConflictException(
+            'You have already rated this provider for this job.',
+          );
+        }
+
+        return transaction.providerReview.create({
+          data: {
+            assignmentId: assignment.id,
+            customerId,
+            providerId: assignment.providerId,
+            rating: ratingInput,
+            comment: comment || null,
+          },
+          select: {
+            id: true,
+            rating: true,
+            comment: true,
+          },
+        });
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'You have already rated this provider for this job.',
+        );
+      }
+      throw error;
+    }
+  }
+
   async getProviders() {
     const providers = await this.prisma.providerProfile.findMany({
       orderBy: { user: { name: 'asc' } },
@@ -207,6 +358,177 @@ export class AppService {
         name: skill.service.name,
       })),
     }));
+  }
+
+  async getProviderAssignments(providerId: string) {
+    const profile = await this.prisma.providerProfile.findUnique({
+      where: { userId: providerId },
+      select: { verified: true },
+    });
+    if (!profile) throw new NotFoundException('Provider profile was not found.');
+    if (!profile.verified) {
+      throw new ForbiddenException('Your provider account is not verified.');
+    }
+
+    const assignments = await this.prisma.assignment.findMany({
+      where: { providerId },
+      orderBy: [{ order: { scheduledAt: 'asc' } }, { offeredAt: 'desc' }],
+      include: {
+        order: {
+          include: {
+            customer: { select: { name: true } },
+            requirements: {
+              include: { service: { select: { name: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    return assignments.map((assignment) => {
+      const requirement = assignment.order.requirements.find(
+        (item) => item.id === assignment.requirementId,
+      );
+      const dateTime = formatIndiaDateTime(assignment.order.scheduledAt);
+      return {
+        id: assignment.id,
+        status: assignment.status.toLowerCase(),
+        serviceName: requirement?.service.name ?? 'Service request',
+        customerName: assignment.order.customer.name,
+        date: dateTime.date,
+        time: dateTime.time,
+        address: assignment.order.address,
+        instructions: assignment.order.instructions ?? undefined,
+        hours: assignment.order.durationMinutes
+          ? assignment.order.durationMinutes / 60
+          : undefined,
+      };
+    });
+  }
+
+  async updateProviderAssignment(
+    providerId: string,
+    assignmentId: string,
+    requestedStatus: unknown,
+  ) {
+    if (typeof requestedStatus !== 'string') {
+      throw new BadRequestException('status must be a supported assignment status.');
+    }
+
+    return this.prisma.$transaction(
+      async (transaction) => {
+        const profile = await transaction.providerProfile.findUnique({
+          where: { userId: providerId },
+          select: { verified: true },
+        });
+        if (!profile?.verified) {
+          throw new ForbiddenException('Your provider account is not verified.');
+        }
+
+        const assignment = await transaction.assignment.findFirst({
+          where: { id: assignmentId, providerId },
+          include: {
+            order: {
+              include: {
+                requirements: { select: { id: true, quantity: true } },
+                assignments: {
+                  select: { id: true, requirementId: true, status: true },
+                },
+              },
+            },
+          },
+        });
+        if (!assignment) {
+          throw new NotFoundException('Assigned job was not found.');
+        }
+
+        const transitions: Partial<Record<AssignmentStatus, AssignmentStatus[]>> = {
+          [AssignmentStatus.OFFERED]: [
+            AssignmentStatus.ACCEPTED,
+            AssignmentStatus.REJECTED,
+          ],
+          [AssignmentStatus.ACCEPTED]: [AssignmentStatus.ON_THE_WAY],
+          [AssignmentStatus.ON_THE_WAY]: [AssignmentStatus.ARRIVED],
+          [AssignmentStatus.ARRIVED]: [AssignmentStatus.STARTED],
+          [AssignmentStatus.STARTED]: [AssignmentStatus.COMPLETED],
+        };
+        const nextStatus = requestedStatus.toUpperCase() as AssignmentStatus;
+        if (!transitions[assignment.status]?.includes(nextStatus)) {
+          throw new BadRequestException(
+            `Cannot change an assignment from ${assignment.status.toLowerCase()} to ${requestedStatus.toLowerCase()}.`,
+          );
+        }
+
+        const updated = await transaction.assignment.updateMany({
+          where: {
+            id: assignment.id,
+            providerId,
+            status: assignment.status,
+          },
+          data: {
+            status: nextStatus,
+            ...(nextStatus === AssignmentStatus.ACCEPTED
+              ? { acceptedAt: new Date() }
+              : {}),
+            ...(nextStatus === AssignmentStatus.COMPLETED
+              ? { completedAt: new Date() }
+              : {}),
+          },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException('This assigned job changed. Refresh and try again.');
+        }
+
+        const assignmentStatuses = assignment.order.assignments
+          .filter((item) => item.requirementId === assignment.requirementId)
+          .map((item) =>
+            item.id === assignment.id ? nextStatus : item.status,
+          );
+        const requirement = assignment.order.requirements.find(
+          (item) => item.id === assignment.requirementId,
+        );
+        const requiredProviderCount = requirement?.quantity ?? 1;
+        let orderStatus = assignment.order.status;
+        if (nextStatus === AssignmentStatus.REJECTED) {
+          orderStatus = OrderStatus.REASSIGNMENT_REQUIRED;
+        } else if (
+          assignmentStatuses.filter(
+            (status) => status === AssignmentStatus.COMPLETED,
+          ).length >= requiredProviderCount
+        ) {
+          orderStatus = OrderStatus.COMPLETED;
+        } else if (assignmentStatuses.includes(AssignmentStatus.COMPLETED)) {
+          orderStatus = OrderStatus.PARTIALLY_COMPLETED;
+        } else if (assignmentStatuses.includes(AssignmentStatus.STARTED)) {
+          orderStatus = OrderStatus.STARTED;
+        } else if (assignmentStatuses.includes(AssignmentStatus.ARRIVED)) {
+          orderStatus = OrderStatus.ARRIVED;
+        } else if (assignmentStatuses.includes(AssignmentStatus.ON_THE_WAY)) {
+          orderStatus = OrderStatus.ON_THE_WAY;
+        } else if (assignmentStatuses.includes(AssignmentStatus.ACCEPTED)) {
+          orderStatus = OrderStatus.ACCEPTED;
+        } else if (assignmentStatuses.includes(AssignmentStatus.OFFERED)) {
+          orderStatus =
+            assignmentStatuses.filter(
+              (status) =>
+                status !== AssignmentStatus.REJECTED &&
+                status !== AssignmentStatus.CANCELLED,
+            ).length >= requiredProviderCount
+              ? OrderStatus.ASSIGNED
+              : OrderStatus.PARTIALLY_ASSIGNED;
+        }
+
+        if (orderStatus !== assignment.order.status) {
+          await transaction.order.update({
+            where: { id: assignment.orderId },
+            data: { status: orderStatus },
+          });
+        }
+
+        return { id: assignment.id, status: nextStatus.toLowerCase() };
+      },
+      { isolationLevel: 'Serializable' },
+    );
   }
 
   async createProvider(input: ProviderInput) {
