@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -36,8 +39,14 @@ type ProviderAssignment = {
 
 type ProviderJobsScreenProps = {
   error: string;
+  initialAvailable: boolean;
   name: string;
   onSignOut: () => void;
+};
+
+type Earnings = {
+  totalJobsCompleted: number;
+  totalEarnings: number;
 };
 
 const statusLabels: Record<AssignmentStatus, string> = {
@@ -61,6 +70,12 @@ const nextAction: Partial<
   started: { status: 'completed', label: 'Complete job' },
 };
 
+const cancellableStatuses = new Set<AssignmentStatus>([
+  'accepted',
+  'on_the_way',
+  'arrived',
+]);
+
 async function authenticatedFetch<T>(url: string, init?: RequestInit) {
   const cookie = await authClient.getCookie();
   if (!cookie) throw new Error('Your sign-in session expired. Sign in again.');
@@ -75,6 +90,7 @@ async function authenticatedFetch<T>(url: string, init?: RequestInit) {
 
 export default function ProviderJobsScreen({
   error: authError,
+  initialAvailable,
   name,
   onSignOut,
 }: ProviderJobsScreenProps) {
@@ -83,6 +99,10 @@ export default function ProviderJobsScreen({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState(authError);
+  const [isAvailable, setIsAvailable] = useState(initialAvailable);
+  const [isTogglingAvailability, setIsTogglingAvailability] = useState(false);
+  const [earnings, setEarnings] = useState<Earnings | null>(null);
+  const [otpDrafts, setOtpDrafts] = useState<Record<string, string>>({});
 
   const loadJobs = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -105,13 +125,60 @@ export default function ProviderJobsScreen({
     }
   }, []);
 
+  const loadEarnings = useCallback(async () => {
+    try {
+      setEarnings(await authenticatedFetch<Earnings>(`${apiBaseUrl}/provider/earnings`));
+    } catch {
+      // Earnings are a nice-to-have summary; a failed fetch just leaves the card hidden.
+    }
+  }, []);
+
   useEffect(() => {
     void loadJobs();
-  }, [loadJobs]);
+    void loadEarnings();
+  }, [loadJobs, loadEarnings]);
+
+  const toggleAvailability = async (value: boolean) => {
+    setIsAvailable(value);
+    setIsTogglingAvailability(true);
+    setError('');
+    try {
+      await authenticatedFetch(`${apiBaseUrl}/provider/availability`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ available: value }),
+      });
+    } catch (toggleError) {
+      setIsAvailable(!value);
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : 'Could not update your availability. Please try again.',
+      );
+    } finally {
+      setIsTogglingAvailability(false);
+    }
+  };
+
+  const confirmCancelJob = (job: ProviderAssignment) => {
+    Alert.alert(
+      'Cancel this job?',
+      'The platform will try to find a replacement provider for the customer.',
+      [
+        { text: 'Keep job', style: 'cancel' },
+        {
+          text: 'Cancel job',
+          style: 'destructive',
+          onPress: () => void updateStatus(job, 'cancelled'),
+        },
+      ],
+    );
+  };
 
   const updateStatus = async (
     job: ProviderAssignment,
     status: AssignmentStatus,
+    otp?: string,
   ) => {
     setUpdatingId(job.id);
     setError('');
@@ -121,10 +188,15 @@ export default function ProviderJobsScreen({
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status }),
+          body: JSON.stringify(otp ? { status, otp } : { status }),
         },
       );
+      setOtpDrafts((current) => {
+        const { [job.id]: _removed, ...rest } = current;
+        return rest;
+      });
       await loadJobs(true);
+      if (status === 'completed') await loadEarnings();
     } catch (updateError) {
       setError(
         updateError instanceof Error
@@ -157,6 +229,37 @@ export default function ProviderJobsScreen({
         <Text style={styles.subtitle}>
           Review your assigned work and keep each job status up to date.
         </Text>
+
+        <View style={styles.availabilityRow}>
+          <View style={styles.availabilityCopy}>
+            <Text style={styles.availabilityTitle}>
+              {isAvailable ? 'Available for new jobs' : 'Not taking new jobs'}
+            </Text>
+            <Text style={styles.availabilityHint}>
+              Turn this off when you are done for the day.
+            </Text>
+          </View>
+          <Switch
+            disabled={isTogglingAvailability}
+            onValueChange={(value) => void toggleAvailability(value)}
+            value={isAvailable}
+          />
+        </View>
+
+        {earnings ? (
+          <View style={styles.earningsCard}>
+            <View>
+              <Text style={styles.earningsLabel}>JOBS COMPLETED</Text>
+              <Text style={styles.earningsValue}>{earnings.totalJobsCompleted}</Text>
+            </View>
+            <View>
+              <Text style={styles.earningsLabel}>TOTAL EARNINGS</Text>
+              <Text style={styles.earningsValue}>
+                ₹{earnings.totalEarnings.toLocaleString('en-IN')}
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Your jobs</Text>
@@ -237,12 +340,50 @@ export default function ProviderJobsScreen({
                       <Text style={styles.declineText}>Decline</Text>
                     </Pressable>
                   </View>
+                ) : job.status === 'arrived' ? (
+                  <View style={styles.otpBox}>
+                    <Text style={styles.otpLabel}>
+                      Ask the customer for their start code
+                    </Text>
+                    <TextInput
+                      accessibilityLabel="Customer start code"
+                      keyboardType="number-pad"
+                      maxLength={4}
+                      onChangeText={(value) =>
+                        setOtpDrafts((current) => ({
+                          ...current,
+                          [job.id]: value.replace(/\D/g, ''),
+                        }))
+                      }
+                      placeholder="4-digit code"
+                      placeholderTextColor="#9aa39a"
+                      style={styles.otpInput}
+                      value={otpDrafts[job.id] ?? ''}
+                    />
+                    <ActionButton
+                      disabled={isUpdating || (otpDrafts[job.id] ?? '').length !== 4}
+                      label={isUpdating ? 'Please wait…' : 'Start job'}
+                      onPress={() =>
+                        void updateStatus(job, 'started', otpDrafts[job.id])
+                      }
+                    />
+                  </View>
                 ) : action ? (
                   <ActionButton
                     disabled={isUpdating}
                     label={isUpdating ? 'Please wait…' : action.label}
                     onPress={() => void updateStatus(job, action.status)}
                   />
+                ) : null}
+                {cancellableStatuses.has(job.status) ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isUpdating}
+                    onPress={() => confirmCancelJob(job)}
+                    style={styles.cancelJobButton}
+                  >
+                    <Text style={styles.declineText}>Cancel job</Text>
+                  </Pressable>
                 ) : null}
               </View>
             );
@@ -305,6 +446,35 @@ const styles = StyleSheet.create({
     marginTop: 35,
   },
   subtitle: { color: '#6c796e', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  availabilityRow: {
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderColor: '#e7eae4',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 18,
+    padding: 15,
+  },
+  availabilityCopy: { flex: 1 },
+  availabilityTitle: { color: '#254a34', fontSize: 13, fontWeight: '700' },
+  availabilityHint: { color: '#6c796e', fontSize: 10, marginTop: 3 },
+  earningsCard: {
+    backgroundColor: '#244c38',
+    borderRadius: 14,
+    flexDirection: 'row',
+    gap: 24,
+    marginTop: 12,
+    padding: 15,
+  },
+  earningsLabel: {
+    color: '#b9ccb9',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  earningsValue: { color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 4 },
   sectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -379,4 +549,28 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.55 },
   declineButton: { paddingHorizontal: 10, paddingVertical: 12 },
   declineText: { color: '#a44338', fontSize: 12, fontWeight: '700' },
+  cancelJobButton: {
+    alignItems: 'center',
+    borderColor: '#e7c4ba',
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginTop: 10,
+    minHeight: 40,
+  },
+  otpBox: { marginTop: 14 },
+  otpLabel: { color: '#6c796e', fontSize: 11, marginBottom: 8 },
+  otpInput: {
+    backgroundColor: '#fafbf9',
+    borderColor: '#e7eae4',
+    borderRadius: 10,
+    borderWidth: 1,
+    color: '#293a2d',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 4,
+    minHeight: 45,
+    paddingHorizontal: 14,
+    textAlign: 'center',
+  },
 });

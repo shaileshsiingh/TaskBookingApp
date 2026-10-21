@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,12 +24,19 @@ type CustomerAssignment = {
   status: string;
   customerConfirmed: boolean;
   review: ProviderReview;
+  startOtp?: string;
+};
+
+type CustomerRequirement = {
+  id: string;
+  serviceName: string;
+  people: number;
+  status: string;
+  assignments: CustomerAssignment[];
 };
 
 type CustomerBooking = {
   id: string;
-  serviceName: string;
-  people: number;
   hours: number;
   date: string;
   time: string;
@@ -36,8 +44,17 @@ type CustomerBooking = {
   instructions?: string;
   estimatedTotal: number;
   status: string;
-  assignments: CustomerAssignment[];
+  requirements: CustomerRequirement[];
 };
+
+const uncancellableStatuses = new Set([
+  'completed',
+  'cancelled',
+  'partially_completed',
+  'disputed',
+  'refunded',
+  'failed',
+]);
 
 type CustomerBookingsScreenProps = {
   error: string;
@@ -86,6 +103,7 @@ export default function CustomerBookingsScreen({
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [error, setError] = useState(authError);
 
   const loadBookings = useCallback(async (refresh = false) => {
@@ -156,6 +174,41 @@ export default function CustomerBookingsScreen({
     }
   };
 
+  const cancelBooking = (bookingId: string) => {
+    Alert.alert(
+      'Cancel this booking?',
+      'A cancellation fee may apply if the scheduled time is close.',
+      [
+        { text: 'Keep booking', style: 'cancel' },
+        {
+          text: 'Cancel booking',
+          style: 'destructive',
+          onPress: () => void performCancellation(bookingId),
+        },
+      ],
+    );
+  };
+
+  const performCancellation = async (bookingId: string) => {
+    setCancellingId(bookingId);
+    setError('');
+    try {
+      await authenticatedFetch(
+        `${apiBaseUrl}/customer/orders/${encodeURIComponent(bookingId)}/cancellation`,
+        { method: 'PATCH' },
+      );
+      await loadBookings(true);
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : 'Could not cancel this booking. Please try again.',
+      );
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <StatusBar style="dark" />
@@ -214,7 +267,6 @@ export default function CustomerBookingsScreen({
             <View key={booking.id} style={styles.bookingCard}>
               <View style={styles.bookingTop}>
                 <View style={styles.bookingTitleCopy}>
-                  <Text style={styles.serviceName}>{booking.serviceName}</Text>
                   <Text style={styles.bookingDate}>
                     {booking.date} · {booking.time}
                   </Text>
@@ -224,8 +276,7 @@ export default function CustomerBookingsScreen({
                 </Text>
               </View>
               <Text style={styles.detail}>
-                {booking.people} {booking.people === 1 ? 'provider' : 'providers'}
-                {' · '}{booking.hours} {booking.hours === 1 ? 'hour' : 'hours'}
+                {booking.hours} {booking.hours === 1 ? 'hour' : 'hours'}
                 {' · '}₹{booking.estimatedTotal.toLocaleString('en-IN')}
               </Text>
               <Text style={styles.address}>{booking.address}</Text>
@@ -235,127 +286,166 @@ export default function CustomerBookingsScreen({
                 </Text>
               ) : null}
 
-              <View style={styles.divider} />
-              <Text style={styles.sectionTitle}>Provider progress</Text>
-              {booking.assignments.length === 0 ? (
-                <Text style={styles.emptyText}>
-                  No provider has been assigned yet. Refresh to check for updates.
-                </Text>
-              ) : (
-                booking.assignments.map((assignment) => (
-                  <View key={assignment.id} style={styles.assignment}>
-                    <View style={styles.assignmentHeader}>
-                      <View style={styles.assignmentCopy}>
-                        <Text style={styles.providerName}>
-                          {assignment.providerName}
-                        </Text>
-                        <Text style={styles.assignmentStatus}>
-                          {assignment.status.replaceAll('_', ' ')}
-                          {assignment.customerConfirmed
-                            ? ' · confirmed by you'
-                            : ''}
-                        </Text>
-                      </View>
+              {booking.requirements.map((requirement) => (
+                <View key={requirement.id}>
+                  <View style={styles.divider} />
+                  <View style={styles.bookingTop}>
+                    <View style={styles.bookingTitleCopy}>
+                      <Text style={styles.serviceName}>
+                        {requirement.serviceName} · {requirement.people}{' '}
+                        {requirement.people === 1 ? 'provider' : 'providers'}
+                      </Text>
                     </View>
-
-                    {assignment.status === 'completed' &&
-                    !assignment.customerConfirmed ? (
-                      <ActionButton
-                        disabled={updatingId === assignment.id}
-                        label={
-                          updatingId === assignment.id
-                            ? 'Please wait…'
-                            : 'Confirm job completion'
-                        }
-                        onPress={() =>
-                          void updateAssignment(assignment.id, 'confirm')
-                        }
-                      />
-                    ) : null}
-
-                    {assignment.customerConfirmed && !assignment.review ? (
-                      <View style={styles.reviewBox}>
-                        <Text style={styles.reviewPrompt}>Rate this provider</Text>
-                        <View style={styles.stars}>
-                          {[1, 2, 3, 4, 5].map((rating) => {
-                            const selected =
-                              (ratings[assignment.id] ?? 0) >= rating;
-                            return (
-                              <Pressable
-                                accessibilityLabel={`${rating} star${rating === 1 ? '' : 's'}`}
-                                accessibilityRole="button"
-                                accessibilityState={{
-                                  selected: ratings[assignment.id] === rating,
-                                }}
-                                key={rating}
-                                onPress={() =>
-                                  setRatings((current) => ({
-                                    ...current,
-                                    [assignment.id]: rating,
-                                  }))
-                                }
-                              >
-                                <Text
-                                  style={[
-                                    styles.star,
-                                    selected && styles.selectedStar,
-                                  ]}
-                                >
-                                  ★
-                                </Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                        <TextInput
-                          accessibilityLabel="Optional review comment"
-                          maxLength={500}
-                          multiline
-                          onChangeText={(comment) =>
-                            setComments((current) => ({
-                              ...current,
-                              [assignment.id]: comment,
-                            }))
-                          }
-                          placeholder="Optional comment"
-                          placeholderTextColor="#9aa39a"
-                          style={styles.commentInput}
-                          value={comments[assignment.id] ?? ''}
-                        />
-                        <ActionButton
-                          disabled={updatingId === assignment.id}
-                          label={
-                            updatingId === assignment.id
-                              ? 'Please wait…'
-                              : 'Submit rating'
-                          }
-                          onPress={() =>
-                            void updateAssignment(assignment.id, 'review')
-                          }
-                        />
-                      </View>
-                    ) : null}
-
-                    {assignment.review ? (
-                      <View style={styles.reviewSubmitted}>
-                        <Text style={styles.submittedStars}>
-                          {'★'.repeat(assignment.review.rating)}
-                          {'☆'.repeat(5 - assignment.review.rating)}
-                        </Text>
-                        {assignment.review.comment ? (
-                          <Text style={styles.instructions}>
-                            {assignment.review.comment}
-                          </Text>
-                        ) : (
-                          <Text style={styles.assignmentStatus}>
-                            Your rating was submitted.
-                          </Text>
-                        )}
-                      </View>
-                    ) : null}
+                    <Text style={styles.orderStatus}>
+                      {orderStatusLabels[requirement.status] ?? requirement.status}
+                    </Text>
                   </View>
-                ))
-              )}
+                  <Text style={styles.sectionTitle}>Provider progress</Text>
+                  {requirement.assignments.length === 0 ? (
+                    <Text style={styles.emptyText}>
+                      No provider has been assigned yet. Refresh to check for updates.
+                    </Text>
+                  ) : (
+                    requirement.assignments.map((assignment) => (
+                      <View key={assignment.id} style={styles.assignment}>
+                        <View style={styles.assignmentHeader}>
+                          <View style={styles.assignmentCopy}>
+                            <Text style={styles.providerName}>
+                              {assignment.providerName}
+                            </Text>
+                            <Text style={styles.assignmentStatus}>
+                              {assignment.status.replaceAll('_', ' ')}
+                              {assignment.customerConfirmed
+                                ? ' · confirmed by you'
+                                : ''}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {assignment.status === 'arrived' && assignment.startOtp ? (
+                          <View style={styles.otpBox}>
+                            <Text style={styles.otpLabel}>
+                              Share this code with your provider to start the job
+                            </Text>
+                            <Text style={styles.otpValue}>{assignment.startOtp}</Text>
+                          </View>
+                        ) : null}
+
+                        {assignment.status === 'completed' &&
+                        !assignment.customerConfirmed ? (
+                          <ActionButton
+                            disabled={updatingId === assignment.id}
+                            label={
+                              updatingId === assignment.id
+                                ? 'Please wait…'
+                                : 'Confirm job completion'
+                            }
+                            onPress={() =>
+                              void updateAssignment(assignment.id, 'confirm')
+                            }
+                          />
+                        ) : null}
+
+                        {assignment.customerConfirmed && !assignment.review ? (
+                          <View style={styles.reviewBox}>
+                            <Text style={styles.reviewPrompt}>Rate this provider</Text>
+                            <View style={styles.stars}>
+                              {[1, 2, 3, 4, 5].map((rating) => {
+                                const selected =
+                                  (ratings[assignment.id] ?? 0) >= rating;
+                                return (
+                                  <Pressable
+                                    accessibilityLabel={`${rating} star${rating === 1 ? '' : 's'}`}
+                                    accessibilityRole="button"
+                                    accessibilityState={{
+                                      selected: ratings[assignment.id] === rating,
+                                    }}
+                                    key={rating}
+                                    onPress={() =>
+                                      setRatings((current) => ({
+                                        ...current,
+                                        [assignment.id]: rating,
+                                      }))
+                                    }
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.star,
+                                        selected && styles.selectedStar,
+                                      ]}
+                                    >
+                                      ★
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                            <TextInput
+                              accessibilityLabel="Optional review comment"
+                              maxLength={500}
+                              multiline
+                              onChangeText={(comment) =>
+                                setComments((current) => ({
+                                  ...current,
+                                  [assignment.id]: comment,
+                                }))
+                              }
+                              placeholder="Optional comment"
+                              placeholderTextColor="#9aa39a"
+                              style={styles.commentInput}
+                              value={comments[assignment.id] ?? ''}
+                            />
+                            <ActionButton
+                              disabled={updatingId === assignment.id}
+                              label={
+                                updatingId === assignment.id
+                                  ? 'Please wait…'
+                                  : 'Submit rating'
+                              }
+                              onPress={() =>
+                                void updateAssignment(assignment.id, 'review')
+                              }
+                            />
+                          </View>
+                        ) : null}
+
+                        {assignment.review ? (
+                          <View style={styles.reviewSubmitted}>
+                            <Text style={styles.submittedStars}>
+                              {'★'.repeat(assignment.review.rating)}
+                              {'☆'.repeat(5 - assignment.review.rating)}
+                            </Text>
+                            {assignment.review.comment ? (
+                              <Text style={styles.instructions}>
+                                {assignment.review.comment}
+                              </Text>
+                            ) : (
+                              <Text style={styles.assignmentStatus}>
+                                Your rating was submitted.
+                              </Text>
+                            )}
+                          </View>
+                        ) : null}
+                      </View>
+                    ))
+                  )}
+                </View>
+              ))}
+
+              {!uncancellableStatuses.has(booking.status) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={cancellingId === booking.id}
+                  onPress={() => cancelBooking(booking.id)}
+                  style={styles.cancelButton}
+                >
+                  <Text style={styles.cancelText}>
+                    {cancellingId === booking.id
+                      ? 'Cancelling…'
+                      : 'Cancel booking'}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           ))
         )}
@@ -489,6 +579,31 @@ const styles = StyleSheet.create({
   },
   actionText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   disabled: { opacity: 0.55 },
+  otpBox: {
+    alignItems: 'center',
+    backgroundColor: '#edf3ea',
+    borderRadius: 10,
+    marginTop: 11,
+    padding: 12,
+  },
+  otpLabel: { color: '#557657', fontSize: 10, textAlign: 'center' },
+  otpValue: {
+    color: '#244c38',
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 6,
+    marginTop: 6,
+  },
+  cancelButton: {
+    alignItems: 'center',
+    borderColor: '#e7c4ba',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 15,
+    minHeight: 42,
+    justifyContent: 'center',
+  },
+  cancelText: { color: '#a44338', fontSize: 12, fontWeight: '700' },
   reviewBox: {
     backgroundColor: '#f7f8f5',
     borderRadius: 11,

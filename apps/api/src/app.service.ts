@@ -9,18 +9,74 @@ import {
 } from '@nestjs/common';
 import { AssignmentStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from './prisma.service.js';
+import { calculateLineAmountPaise } from './pricing.js';
+import { computeOrderStatus, computeRequirementStatus } from './order-status.js';
+
+type TransactionClient = Prisma.TransactionClient;
+
+type BookingItemInput = {
+  serviceId?: unknown;
+  people?: unknown;
+};
 
 type BookingInput = {
   customerName?: unknown;
   customerPhone?: unknown;
-  serviceId?: unknown;
-  people?: unknown;
+  items?: unknown;
   hours?: unknown;
   date?: unknown;
   time?: unknown;
   address?: unknown;
   instructions?: unknown;
 };
+
+const activeAssignmentStatuses = [
+  AssignmentStatus.OFFERED,
+  AssignmentStatus.ACCEPTED,
+  AssignmentStatus.ON_THE_WAY,
+  AssignmentStatus.ARRIVED,
+  AssignmentStatus.STARTED,
+  AssignmentStatus.COMPLETED,
+] as const;
+
+const terminalOrderStatuses = [
+  OrderStatus.COMPLETED,
+  OrderStatus.CANCELLED,
+  OrderStatus.PARTIALLY_COMPLETED,
+  OrderStatus.DISPUTED,
+  OrderStatus.REFUNDED,
+  OrderStatus.FAILED,
+] as const;
+
+const CANCELLATION_FEE_WINDOW_MINUTES = 120;
+const CANCELLATION_FEE_RATE = 0.1;
+
+function generateStartOtp(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+function isPrismaSerializationConflict(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034'
+  );
+}
+
+async function withSerializableRetry<T>(
+  run: () => Promise<T>,
+  maxAttempts = 3,
+): Promise<T | undefined> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isPrismaSerializationConflict(error) || attempt === maxAttempts) {
+        if (isPrismaSerializationConflict(error)) return undefined;
+        throw error;
+      }
+    }
+  }
+  return undefined;
+}
 
 type ProviderInput = {
   name?: unknown;
@@ -123,6 +179,7 @@ export class AppService {
         description: true,
         unitPricePaise: true,
         pricingModel: true,
+        category: { select: { id: true, name: true } },
       },
     });
 
@@ -130,6 +187,8 @@ export class AppService {
       id: service.id,
       name: service.name,
       detail: service.description ?? 'Available service',
+      categoryId: service.category.id,
+      categoryName: service.category.name,
       price: service.unitPricePaise / 100,
       icon: servicePresentation[service.id]?.icon ?? '✳',
       color: servicePresentation[service.id]?.color ?? '#e9f1e5',
@@ -158,15 +217,11 @@ export class AppService {
     });
 
     return bookings.map((booking) => {
-      const requirement = booking.requirements[0];
       const dateTime = formatIndiaDateTime(booking.scheduledAt);
 
       return {
         id: booking.id,
         customerName: booking.customer.name,
-        serviceId: requirement?.service.id ?? '',
-        serviceName: requirement?.service.name ?? 'Service request',
-        people: requirement?.quantity ?? 1,
         hours: booking.durationMinutes ? booking.durationMinutes / 60 : 1,
         date: dateTime.date,
         time: dateTime.time,
@@ -175,12 +230,30 @@ export class AppService {
         estimatedTotal: (booking.totalAmountPaise ?? 0) / 100,
         status: statusLabels[booking.status],
         createdAt: booking.createdAt.toISOString(),
-        assignments: booking.assignments.map((assignment) => ({
-          id: assignment.id,
-          providerId: assignment.provider.id,
-          providerName: assignment.provider.name,
-          status: assignment.status.toLowerCase(),
-        })),
+        requirements: booking.requirements.map((requirement) => {
+          const assignments = booking.assignments.filter(
+            (assignment) => assignment.requirementId === requirement.id,
+          );
+          return {
+            id: requirement.id,
+            serviceId: requirement.service.id,
+            serviceName: requirement.service.name,
+            people: requirement.quantity,
+            status:
+              statusLabels[
+                computeRequirementStatus(
+                  requirement.quantity,
+                  assignments.map((assignment) => assignment.status),
+                )
+              ],
+            assignments: assignments.map((assignment) => ({
+              id: assignment.id,
+              providerId: assignment.provider.id,
+              providerName: assignment.provider.name,
+              status: assignment.status.toLowerCase(),
+            })),
+          };
+        }),
       };
     });
   }
@@ -204,12 +277,9 @@ export class AppService {
     });
 
     return bookings.map((booking) => {
-      const requirement = booking.requirements[0];
       const dateTime = formatIndiaDateTime(booking.scheduledAt);
       return {
         id: booking.id,
-        serviceName: requirement?.service.name ?? 'Service request',
-        people: requirement?.quantity ?? 1,
         hours: booking.durationMinutes ? booking.durationMinutes / 60 : 1,
         date: dateTime.date,
         time: dateTime.time,
@@ -217,15 +287,97 @@ export class AppService {
         instructions: booking.instructions ?? undefined,
         estimatedTotal: (booking.totalAmountPaise ?? 0) / 100,
         status: statusLabels[booking.status],
-        assignments: booking.assignments.map((assignment) => ({
-          id: assignment.id,
-          providerName: assignment.provider.name,
-          status: assignment.status.toLowerCase(),
-          customerConfirmed: assignment.customerConfirmedAt !== null,
-          review: assignment.review,
-        })),
+        requirements: booking.requirements.map((requirement) => {
+          const assignments = booking.assignments.filter(
+            (assignment) => assignment.requirementId === requirement.id,
+          );
+          return {
+            id: requirement.id,
+            serviceName: requirement.service.name,
+            people: requirement.quantity,
+            status:
+              statusLabels[
+                computeRequirementStatus(
+                  requirement.quantity,
+                  assignments.map((assignment) => assignment.status),
+                )
+              ],
+            assignments: assignments.map((assignment) => ({
+              id: assignment.id,
+              providerName: assignment.provider.name,
+              status: assignment.status.toLowerCase(),
+              customerConfirmed: assignment.customerConfirmedAt !== null,
+              review: assignment.review,
+              startOtp:
+                assignment.status === AssignmentStatus.ARRIVED
+                  ? assignment.startOtp ?? undefined
+                  : undefined,
+            })),
+          };
+        }),
       };
     });
+  }
+
+  async cancelOrder(customerId: string, orderId: string) {
+    return this.prisma.$transaction(
+      async (transaction) => {
+        const order = await transaction.order.findFirst({
+          where: { id: orderId, customerId },
+          include: { assignments: { select: { status: true } } },
+        });
+        if (!order) throw new NotFoundException('Booking was not found.');
+        if ((terminalOrderStatuses as readonly OrderStatus[]).includes(order.status)) {
+          throw new BadRequestException('This booking can no longer be cancelled.');
+        }
+        const hasStartedWork = order.assignments.some(
+          (assignment) =>
+            assignment.status === AssignmentStatus.STARTED ||
+            assignment.status === AssignmentStatus.COMPLETED,
+        );
+        if (hasStartedWork) {
+          throw new BadRequestException(
+            'This booking can no longer be cancelled because work has already started.',
+          );
+        }
+
+        const minutesUntilScheduled = (order.scheduledAt.getTime() - Date.now()) / 60_000;
+        const cancellationFeePaise =
+          minutesUntilScheduled <= CANCELLATION_FEE_WINDOW_MINUTES
+            ? Math.round((order.totalAmountPaise ?? 0) * CANCELLATION_FEE_RATE)
+            : 0;
+
+        await transaction.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: new Date(),
+            cancellationFeePaise,
+          },
+        });
+        await transaction.assignment.updateMany({
+          where: {
+            orderId: order.id,
+            status: {
+              in: [
+                AssignmentStatus.OFFERED,
+                AssignmentStatus.ACCEPTED,
+                AssignmentStatus.ON_THE_WAY,
+                AssignmentStatus.ARRIVED,
+              ],
+            },
+          },
+          data: { status: AssignmentStatus.CANCELLED },
+        });
+
+        return {
+          id: order.id,
+          status: statusLabels[OrderStatus.CANCELLED],
+          cancellationFee: cancellationFeePaise / 100,
+        };
+      },
+      { isolationLevel: 'Serializable' },
+    );
   }
 
   async confirmCustomerAssignment(customerId: string, assignmentId: string) {
@@ -353,11 +505,34 @@ export class AppService {
       phone: profile.user.phone,
       serviceArea: profile.serviceArea,
       verified: profile.verified,
+      available: profile.available,
       services: profile.skills.map((skill) => ({
         id: skill.service.id,
         name: skill.service.name,
       })),
     }));
+  }
+
+  async setProviderAvailability(providerId: string, available: unknown) {
+    if (typeof available !== 'boolean') {
+      throw new BadRequestException('available must be a boolean.');
+    }
+
+    const profile = await this.prisma.providerProfile.findUnique({
+      where: { userId: providerId },
+      select: { verified: true },
+    });
+    if (!profile) throw new NotFoundException('Provider profile was not found.');
+    if (!profile.verified) {
+      throw new ForbiddenException('Your provider account is not verified.');
+    }
+
+    const updated = await this.prisma.providerProfile.update({
+      where: { userId: providerId },
+      data: { available },
+    });
+
+    return { id: providerId, available: updated.available };
   }
 
   async getProviderAssignments(providerId: string) {
@@ -406,16 +581,72 @@ export class AppService {
     });
   }
 
+  async getProviderEarnings(providerId: string) {
+    const profile = await this.prisma.providerProfile.findUnique({
+      where: { userId: providerId },
+      select: { verified: true },
+    });
+    if (!profile) throw new NotFoundException('Provider profile was not found.');
+    if (!profile.verified) {
+      throw new ForbiddenException('Your provider account is not verified.');
+    }
+
+    const completedAssignments = await this.prisma.assignment.findMany({
+      where: {
+        providerId,
+        status: AssignmentStatus.COMPLETED,
+        customerConfirmedAt: { not: null },
+      },
+      orderBy: { completedAt: 'desc' },
+      include: {
+        order: { select: { durationMinutes: true, customer: { select: { name: true } } } },
+        requirement: {
+          select: {
+            quantity: true,
+            service: { select: { name: true, unitPricePaise: true, pricingModel: true } },
+          },
+        },
+      },
+    });
+
+    const jobs = completedAssignments.map((assignment) => {
+      const hours = assignment.order.durationMinutes
+        ? assignment.order.durationMinutes / 60
+        : 1;
+      const lineAmountPaise = calculateLineAmountPaise(
+        assignment.requirement.service.pricingModel,
+        assignment.requirement.service.unitPricePaise,
+        assignment.requirement.quantity,
+        hours,
+      );
+      const amountPaise = Math.round(lineAmountPaise / assignment.requirement.quantity);
+      return {
+        assignmentId: assignment.id,
+        serviceName: assignment.requirement.service.name,
+        customerName: assignment.order.customer.name,
+        completedAt: assignment.completedAt!.toISOString(),
+        amount: amountPaise / 100,
+      };
+    });
+
+    return {
+      totalJobsCompleted: jobs.length,
+      totalEarnings: jobs.reduce((sum, job) => sum + job.amount, 0),
+      recent: jobs.slice(0, 20),
+    };
+  }
+
   async updateProviderAssignment(
     providerId: string,
     assignmentId: string,
     requestedStatus: unknown,
+    otpInput?: unknown,
   ) {
     if (typeof requestedStatus !== 'string') {
       throw new BadRequestException('status must be a supported assignment status.');
     }
 
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (transaction) => {
         const profile = await transaction.providerProfile.findUnique({
           where: { userId: providerId },
@@ -430,7 +661,7 @@ export class AppService {
           include: {
             order: {
               include: {
-                requirements: { select: { id: true, quantity: true } },
+                requirements: { select: { id: true, quantity: true, serviceId: true } },
                 assignments: {
                   select: { id: true, requirementId: true, status: true },
                 },
@@ -447,9 +678,18 @@ export class AppService {
             AssignmentStatus.ACCEPTED,
             AssignmentStatus.REJECTED,
           ],
-          [AssignmentStatus.ACCEPTED]: [AssignmentStatus.ON_THE_WAY],
-          [AssignmentStatus.ON_THE_WAY]: [AssignmentStatus.ARRIVED],
-          [AssignmentStatus.ARRIVED]: [AssignmentStatus.STARTED],
+          [AssignmentStatus.ACCEPTED]: [
+            AssignmentStatus.ON_THE_WAY,
+            AssignmentStatus.CANCELLED,
+          ],
+          [AssignmentStatus.ON_THE_WAY]: [
+            AssignmentStatus.ARRIVED,
+            AssignmentStatus.CANCELLED,
+          ],
+          [AssignmentStatus.ARRIVED]: [
+            AssignmentStatus.STARTED,
+            AssignmentStatus.CANCELLED,
+          ],
           [AssignmentStatus.STARTED]: [AssignmentStatus.COMPLETED],
         };
         const nextStatus = requestedStatus.toUpperCase() as AssignmentStatus;
@@ -457,6 +697,15 @@ export class AppService {
           throw new BadRequestException(
             `Cannot change an assignment from ${assignment.status.toLowerCase()} to ${requestedStatus.toLowerCase()}.`,
           );
+        }
+
+        if (nextStatus === AssignmentStatus.STARTED) {
+          const suppliedOtp = typeof otpInput === 'string' ? otpInput.trim() : '';
+          if (!suppliedOtp || suppliedOtp !== assignment.startOtp) {
+            throw new BadRequestException(
+              'Incorrect OTP. Ask the customer for the code shown in their app.',
+            );
+          }
         }
 
         const updated = await transaction.assignment.updateMany({
@@ -470,6 +719,12 @@ export class AppService {
             ...(nextStatus === AssignmentStatus.ACCEPTED
               ? { acceptedAt: new Date() }
               : {}),
+            ...(nextStatus === AssignmentStatus.ARRIVED
+              ? { startOtp: generateStartOtp() }
+              : {}),
+            ...(nextStatus === AssignmentStatus.STARTED
+              ? { startOtp: null }
+              : {}),
             ...(nextStatus === AssignmentStatus.COMPLETED
               ? { completedAt: new Date() }
               : {}),
@@ -479,44 +734,18 @@ export class AppService {
           throw new ConflictException('This assigned job changed. Refresh and try again.');
         }
 
-        const assignmentStatuses = assignment.order.assignments
-          .filter((item) => item.requirementId === assignment.requirementId)
-          .map((item) =>
-            item.id === assignment.id ? nextStatus : item.status,
-          );
-        const requirement = assignment.order.requirements.find(
-          (item) => item.id === assignment.requirementId,
-        );
-        const requiredProviderCount = requirement?.quantity ?? 1;
-        let orderStatus = assignment.order.status;
-        if (nextStatus === AssignmentStatus.REJECTED) {
-          orderStatus = OrderStatus.REASSIGNMENT_REQUIRED;
-        } else if (
-          assignmentStatuses.filter(
-            (status) => status === AssignmentStatus.COMPLETED,
-          ).length >= requiredProviderCount
-        ) {
-          orderStatus = OrderStatus.COMPLETED;
-        } else if (assignmentStatuses.includes(AssignmentStatus.COMPLETED)) {
-          orderStatus = OrderStatus.PARTIALLY_COMPLETED;
-        } else if (assignmentStatuses.includes(AssignmentStatus.STARTED)) {
-          orderStatus = OrderStatus.STARTED;
-        } else if (assignmentStatuses.includes(AssignmentStatus.ARRIVED)) {
-          orderStatus = OrderStatus.ARRIVED;
-        } else if (assignmentStatuses.includes(AssignmentStatus.ON_THE_WAY)) {
-          orderStatus = OrderStatus.ON_THE_WAY;
-        } else if (assignmentStatuses.includes(AssignmentStatus.ACCEPTED)) {
-          orderStatus = OrderStatus.ACCEPTED;
-        } else if (assignmentStatuses.includes(AssignmentStatus.OFFERED)) {
-          orderStatus =
-            assignmentStatuses.filter(
-              (status) =>
-                status !== AssignmentStatus.REJECTED &&
-                status !== AssignmentStatus.CANCELLED,
-            ).length >= requiredProviderCount
-              ? OrderStatus.ASSIGNED
-              : OrderStatus.PARTIALLY_ASSIGNED;
-        }
+        const requiresReassignment =
+          nextStatus === AssignmentStatus.REJECTED || nextStatus === AssignmentStatus.CANCELLED;
+        const orderStatus = requiresReassignment
+          ? OrderStatus.REASSIGNMENT_REQUIRED
+          : computeOrderStatus(
+              assignment.order.requirements.map((requirement) => ({
+                quantity: requirement.quantity,
+                assignmentStatuses: assignment.order.assignments
+                  .filter((item) => item.requirementId === requirement.id)
+                  .map((item) => (item.id === assignment.id ? nextStatus : item.status)),
+              })),
+            );
 
         if (orderStatus !== assignment.order.status) {
           await transaction.order.update({
@@ -525,10 +754,32 @@ export class AppService {
           });
         }
 
-        return { id: assignment.id, status: nextStatus.toLowerCase() };
+        const requirement = assignment.order.requirements.find(
+          (item) => item.id === assignment.requirementId,
+        )!;
+
+        return {
+          id: assignment.id,
+          status: nextStatus.toLowerCase(),
+          orderId: assignment.orderId,
+          requirementId: assignment.requirementId,
+          serviceId: requirement.serviceId,
+          requiresReassignment,
+        };
       },
       { isolationLevel: 'Serializable' },
     );
+
+    if (result.requiresReassignment) {
+      await this.attemptAutomaticReassignment(
+        result.orderId,
+        result.requirementId,
+        result.serviceId,
+        providerId,
+      );
+    }
+
+    return { id: result.id, status: result.status };
   }
 
   async createProvider(input: ProviderInput) {
@@ -621,9 +872,12 @@ export class AppService {
     return { id: providerId, verified: updatedProfile.verified };
   }
 
-  async assignProvider(orderId: string, providerId: unknown) {
+  async assignProvider(orderId: string, providerId: unknown, requirementId: unknown) {
     if (typeof providerId !== 'string' || !providerId.trim()) {
       throw new BadRequestException('providerId is required.');
+    }
+    if (typeof requirementId !== 'string' || !requirementId.trim()) {
+      throw new BadRequestException('requirementId is required.');
     }
 
     return this.prisma.$transaction(
@@ -638,34 +892,31 @@ export class AppService {
         if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.COMPLETED) {
           throw new BadRequestException('This booking cannot accept provider assignments.');
         }
-        const requirement = order.requirements[0];
-        if (!requirement) throw new BadRequestException('Booking has no service requirement.');
+        const requirement = order.requirements.find((item) => item.id === requirementId);
+        if (!requirement) {
+          throw new BadRequestException('This booking has no such service requirement.');
+        }
 
         const provider = await transaction.providerProfile.findFirst({
           where: {
             userId: providerId.trim(),
             verified: true,
+            available: true,
             skills: { some: { serviceId: requirement.serviceId } },
           },
           select: { userId: true },
         });
         if (!provider) {
-          throw new BadRequestException('Choose a verified provider qualified for this service.');
+          throw new BadRequestException(
+            'Choose a verified, available provider qualified for this service.',
+          );
         }
 
-        const activeStatuses = [
-          'OFFERED',
-          'ACCEPTED',
-          'ON_THE_WAY',
-          'ARRIVED',
-          'STARTED',
-          'COMPLETED',
-        ] as const;
         const activeAssignments = await transaction.assignment.count({
           where: {
             orderId,
             requirementId: requirement.id,
-            status: { in: [...activeStatuses] },
+            status: { in: [...activeAssignmentStatuses] },
           },
         });
         if (activeAssignments >= requirement.quantity) {
@@ -677,7 +928,7 @@ export class AppService {
             orderId,
             requirementId: requirement.id,
             providerId: provider.userId,
-            status: { in: [...activeStatuses] },
+            status: { in: [...activeAssignmentStatuses] },
           },
           select: { id: true },
         });
@@ -693,16 +944,25 @@ export class AppService {
           },
           include: { provider: { select: { name: true } } },
         });
-        const nextAssignmentCount = activeAssignments + 1;
-        await transaction.order.update({
-          where: { id: orderId },
-          data: {
-            status:
-              nextAssignmentCount >= requirement.quantity
-                ? OrderStatus.ASSIGNED
-                : OrderStatus.PARTIALLY_ASSIGNED,
-          },
+
+        const allAssignments = await transaction.assignment.findMany({
+          where: { orderId },
+          select: { requirementId: true, status: true },
         });
+        const nextOrderStatus = computeOrderStatus(
+          order.requirements.map((item) => ({
+            quantity: item.quantity,
+            assignmentStatuses: allAssignments
+              .filter((entry) => entry.requirementId === item.id)
+              .map((entry) => entry.status),
+          })),
+        );
+        if (nextOrderStatus !== order.status) {
+          await transaction.order.update({
+            where: { id: orderId },
+            data: { status: nextOrderStatus },
+          });
+        }
 
         return {
           id: assignment.id,
@@ -712,6 +972,104 @@ export class AppService {
         };
       },
       { isolationLevel: 'Serializable' },
+    );
+  }
+
+  private async findEligibleProvider(
+    transaction: TransactionClient,
+    requirementId: string,
+    serviceId: string,
+    excludeProviderIds: string[],
+  ): Promise<string | null> {
+    const activeOnRequirement = await transaction.assignment.findMany({
+      where: { requirementId, status: { in: [...activeAssignmentStatuses] } },
+      select: { providerId: true },
+    });
+    const excluded = new Set([
+      ...excludeProviderIds,
+      ...activeOnRequirement.map((item) => item.providerId),
+    ]);
+
+    const candidates = await transaction.providerProfile.findMany({
+      where: {
+        verified: true,
+        available: true,
+        skills: { some: { serviceId } },
+        userId: { notIn: [...excluded] },
+      },
+      select: { userId: true },
+    });
+    if (candidates.length === 0) return null;
+
+    const workloads = await transaction.assignment.groupBy({
+      by: ['providerId'],
+      where: {
+        providerId: { in: candidates.map((candidate) => candidate.userId) },
+        status: { in: [...activeAssignmentStatuses] },
+      },
+      _count: { _all: true },
+    });
+    const workloadByProvider = new Map(
+      workloads.map((entry) => [entry.providerId, entry._count._all]),
+    );
+
+    return candidates
+      .slice()
+      .sort(
+        (a, b) =>
+          (workloadByProvider.get(a.userId) ?? 0) - (workloadByProvider.get(b.userId) ?? 0),
+      )[0].userId;
+  }
+
+  private async attemptAutomaticReassignment(
+    orderId: string,
+    requirementId: string,
+    serviceId: string,
+    departedProviderId: string,
+  ): Promise<void> {
+    await withSerializableRetry(() =>
+      this.prisma.$transaction(
+        async (transaction) => {
+          const order = await transaction.order.findUnique({
+            where: { id: orderId },
+            select: { status: true },
+          });
+          if (!order || order.status !== OrderStatus.REASSIGNMENT_REQUIRED) return;
+
+          const replacementProviderId = await this.findEligibleProvider(
+            transaction,
+            requirementId,
+            serviceId,
+            [departedProviderId],
+          );
+          if (!replacementProviderId) return;
+
+          await transaction.assignment.create({
+            data: { orderId, requirementId, providerId: replacementProviderId },
+          });
+
+          const fullOrder = await transaction.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: {
+              requirements: { select: { id: true, quantity: true } },
+              assignments: { select: { requirementId: true, status: true } },
+            },
+          });
+          const nextOrderStatus = computeOrderStatus(
+            fullOrder.requirements.map((requirement) => ({
+              quantity: requirement.quantity,
+              assignmentStatuses: fullOrder.assignments
+                .filter((assignment) => assignment.requirementId === requirement.id)
+                .map((assignment) => assignment.status),
+            })),
+          );
+          await transaction.order.update({
+            where: { id: orderId },
+            data: { status: nextOrderStatus },
+          });
+        },
+        { isolationLevel: 'Serializable' },
+      ),
     );
   }
 
@@ -729,37 +1087,64 @@ export class AppService {
     const customerName = typeof input.customerName === 'string' ? input.customerName.trim() : '';
     const customerPhone =
       typeof input.customerPhone === 'string' ? input.customerPhone.replace(/\D/g, '') : '';
-    const serviceId = typeof input.serviceId === 'string' ? input.serviceId.trim() : '';
     const address = typeof input.address === 'string' ? input.address.trim() : '';
     const instructions = typeof input.instructions === 'string' ? input.instructions.trim() : '';
     const date = typeof input.date === 'string' ? input.date.trim() : '';
     const time = typeof input.time === 'string' ? input.time.trim() : '';
-    const people = Number(input.people);
     const hours = Number(input.hours);
 
     if (!customerName) throw new BadRequestException('customerName is required.');
-    if (!/^\d{10}$/.test(customerPhone)) {
-      throw new BadRequestException('customerPhone must contain a valid 10-digit phone number.');
-    }
-    if (!Number.isInteger(people) || people < 1 || people > 20) {
-      throw new BadRequestException('people must be an integer between 1 and 20.');
+    if (!/^\d{7,15}$/.test(customerPhone)) {
+      throw new BadRequestException('customerPhone must contain 7 to 15 digits.');
     }
     if (!Number.isInteger(hours) || hours < 1 || hours > 12) {
       throw new BadRequestException('hours must be an integer between 1 and 12.');
     }
     if (!address) throw new BadRequestException('address is required.');
 
-    const scheduledAt = dateTimeInIndia(date, time);
-    const service = await this.prisma.service.findFirst({
-      where: { id: serviceId, active: true },
-      select: { id: true, unitPricePaise: true },
+    if (!Array.isArray(input.items) || input.items.length === 0 || input.items.length > 5) {
+      throw new BadRequestException('items must contain between 1 and 5 service requirements.');
+    }
+    const items = (input.items as BookingItemInput[]).map((item) => {
+      const serviceId = typeof item.serviceId === 'string' ? item.serviceId.trim() : '';
+      const people = Number(item.people);
+      if (!serviceId) throw new BadRequestException('Each item requires a serviceId.');
+      if (!Number.isInteger(people) || people < 1 || people > 20) {
+        throw new BadRequestException('Each item requires people between 1 and 20.');
+      }
+      return { serviceId, people };
     });
-
-    if (!service) {
-      throw new BadRequestException(`Unsupported or inactive serviceId: ${serviceId || 'missing'}`);
+    const serviceIds = items.map((item) => item.serviceId);
+    if (new Set(serviceIds).size !== serviceIds.length) {
+      throw new BadRequestException('items cannot repeat the same serviceId.');
     }
 
-    const totalAmountPaise = service.unitPricePaise * people * hours;
+    const scheduledAt = dateTimeInIndia(date, time);
+    const services = await this.prisma.service.findMany({
+      where: { id: { in: serviceIds }, active: true },
+      select: { id: true, name: true, unitPricePaise: true, pricingModel: true },
+    });
+    const serviceById = new Map(services.map((service) => [service.id, service]));
+    const missingServiceId = serviceIds.find((id) => !serviceById.has(id));
+    if (missingServiceId) {
+      throw new BadRequestException(`Unsupported or inactive serviceId: ${missingServiceId}`);
+    }
+
+    const lineItems = items.map((item) => {
+      const service = serviceById.get(item.serviceId)!;
+      return {
+        service,
+        people: item.people,
+        lineAmountPaise: calculateLineAmountPaise(
+          service.pricingModel,
+          service.unitPricePaise,
+          item.people,
+          hours,
+        ),
+      };
+    });
+    const totalAmountPaise = lineItems.reduce((sum, item) => sum + item.lineAmountPaise, 0);
+
     const order = await this.prisma.$transaction(async (transaction) => {
       const customer = await transaction.user.upsert({
         where: { phone: customerPhone },
@@ -781,11 +1166,11 @@ export class AppService {
           instructions: instructions || null,
           totalAmountPaise,
           requirements: {
-            create: {
-              serviceId: service.id,
-              quantity: people,
+            create: lineItems.map((item) => ({
+              serviceId: item.service.id,
+              quantity: item.people,
               notes: instructions || null,
-            },
+            })),
           },
         },
         include: {
@@ -799,15 +1184,19 @@ export class AppService {
       });
     });
 
-    const requirement = order.requirements[0];
     const dateTime = formatIndiaDateTime(order.scheduledAt);
 
     return {
       id: order.id,
       customerName: order.customer.name,
-      serviceId: requirement.service.id,
-      serviceName: requirement.service.name,
-      people: requirement.quantity,
+      requirements: order.requirements.map((requirement) => ({
+        serviceId: requirement.service.id,
+        serviceName: requirement.service.name,
+        people: requirement.quantity,
+        lineTotal:
+          (lineItems.find((item) => item.service.id === requirement.service.id)
+            ?.lineAmountPaise ?? 0) / 100,
+      })),
       hours,
       date: dateTime.date,
       time: dateTime.time,

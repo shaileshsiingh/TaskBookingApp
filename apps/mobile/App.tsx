@@ -25,6 +25,8 @@ type Service = {
   id: string;
   name: string;
   detail: string;
+  categoryId: string;
+  categoryName: string;
   price: number;
   icon: string;
   color: string;
@@ -41,6 +43,7 @@ type CurrentUser = {
   name: string;
   phone: string;
   providerVerified: boolean;
+  providerAvailable: boolean;
 };
 
 const formatPrice = (amount: number) => `₹${amount.toLocaleString('en-IN')}`;
@@ -89,6 +92,7 @@ export default function App() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [authError, setAuthError] = useState('');
   const [availableServices, setAvailableServices] = useState<Service[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [service, setService] = useState<Service | null>(null);
   const [isLoadingServices, setIsLoadingServices] = useState(true);
   const [isApiConnected, setIsApiConnected] = useState(false);
@@ -106,6 +110,17 @@ export default function App() {
   const [lastBookingId, setLastBookingId] = useState<string | null>(null);
   const total = (service?.price ?? 0) * people * hours;
   const connectionLabel = isLoadingServices ? 'CONNECTING' : isApiConnected ? 'LIVE' : 'OFFLINE';
+  const categories = Array.from(
+    new Map(
+      availableServices.map((item) => [
+        item.categoryId,
+        { id: item.categoryId, name: item.categoryName },
+      ]),
+    ).values(),
+  );
+  const visibleServices = selectedCategoryId
+    ? availableServices.filter((item) => item.categoryId === selectedCategoryId)
+    : availableServices;
 
   useEffect(() => {
     let isMounted = true;
@@ -254,8 +269,7 @@ export default function App() {
         body: JSON.stringify({
           customerName,
           customerPhone,
-          serviceId: service.id,
-          people,
+          items: [{ serviceId: service.id, people }],
           hours,
           date,
           time,
@@ -306,23 +320,24 @@ export default function App() {
     );
   }
 
+  if (showCustomerBookings) {
+    return (
+      <CustomerBookingsScreen
+        error={authError}
+        name={currentUser.name}
+        onBack={() => setShowCustomerBookings(false)}
+      />
+    );
+  }
+
   if (currentUser.role === 'PROVIDER') {
     if (currentUser.providerVerified) {
       return (
         <ProviderJobsScreen
           error={authError}
+          initialAvailable={currentUser.providerAvailable}
           name={currentUser.name}
           onSignOut={() => void signOut()}
-        />
-      );
-    }
-
-    if (showCustomerBookings) {
-      return (
-        <CustomerBookingsScreen
-          error={authError}
-          name={currentUser.name}
-          onBack={() => setShowCustomerBookings(false)}
         />
       );
     }
@@ -418,8 +433,41 @@ export default function App() {
               <Text style={styles.sectionHint}>{isLoadingServices ? 'Loading services…' : 'Choose one service'}</Text>
             </View>
 
+            {categories.length > 0 ? (
+              <ScrollView
+                horizontal
+                contentContainerStyle={styles.categoryList}
+                showsHorizontalScrollIndicator={false}
+              >
+                <CategoryChip
+                  label="All services"
+                  selected={selectedCategoryId === null}
+                  onPress={() => setSelectedCategoryId(null)}
+                />
+                {categories.map((category) => (
+                  <CategoryChip
+                    key={category.id}
+                    label={category.name}
+                    selected={selectedCategoryId === category.id}
+                    onPress={() => {
+                      setSelectedCategoryId(category.id);
+                      const firstService = availableServices.find(
+                        (item) => item.categoryId === category.id,
+                      );
+                      if (
+                        firstService &&
+                        service?.categoryId !== category.id
+                      ) {
+                        setService(firstService);
+                      }
+                    }}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
+
             <View style={styles.serviceList}>
-              {availableServices.map((item) => {
+              {visibleServices.map((item) => {
                 const selected = service?.id === item.id;
                 return (
                   <Pressable
@@ -700,7 +748,9 @@ export default function App() {
               onPress={() => setShowCustomerBookings(true)}
               style={styles.confirmationBookingsLink}
             >
-              <Text style={styles.myBookingsText}>View my bookings ›</Text>
+              <Text style={styles.confirmationBookingsText}>
+                View my bookings ›
+              </Text>
             </Pressable>
             <PrimaryButton label="Start a new request" onPress={startAgain} />
             <Text style={styles.disclaimer}>Preview only · Nothing was sent or charged.</Text>
@@ -760,13 +810,42 @@ function PrimaryButton({ label, onPress, disabled = false }: { label: string; on
   );
 }
 
+function CategoryChip({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[styles.categoryChip, selected && styles.categoryChipSelected]}
+    >
+      <Text
+        style={[
+          styles.categoryChipText,
+          selected && styles.categoryChipTextSelected,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#f5f6f1' },
   authLoading: { alignItems: 'center', backgroundColor: '#f5f6f1', flex: 1, justifyContent: 'center' },
   authLoadingText: { color: '#6c796e', fontSize: 13 },
-  myBookingsLink: { alignSelf: 'flex-end', marginTop: 12, paddingVertical: 4 },
-  myBookingsText: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
+  myBookingsLink: { alignItems: 'center', alignSelf: 'flex-end', backgroundColor: '#244c38', borderRadius: 11, justifyContent: 'center', marginBottom: 17, minHeight: 44, minWidth: 152, paddingHorizontal: 15 },
+  myBookingsText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   confirmationBookingsLink: { alignSelf: 'center', marginBottom: 8, padding: 10 },
+  confirmationBookingsText: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
   content: { flexGrow: 1, paddingHorizontal: 21, paddingTop: 52, paddingBottom: 36 },
   topBar: { alignItems: 'center', flexDirection: 'row', marginBottom: 27 },
   brandMark: { alignItems: 'center', backgroundColor: '#244c38', borderRadius: 11, height: 39, justifyContent: 'center', marginRight: 10, width: 39 },
@@ -794,6 +873,11 @@ const styles = StyleSheet.create({
   sectionHeading: { marginBottom: 13 },
   sectionTitle: { color: '#26362a', fontSize: 15, fontWeight: '700' },
   sectionHint: { color: '#899389', fontSize: 11, marginTop: 4 },
+  categoryList: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingBottom: 13 },
+  categoryChip: { alignItems: 'center', backgroundColor: '#fff', borderColor: '#d8dfd6', borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 42, paddingHorizontal: 14 },
+  categoryChipSelected: { backgroundColor: '#244c38', borderColor: '#244c38' },
+  categoryChipText: { color: '#455747', fontSize: 12, fontWeight: '600' },
+  categoryChipTextSelected: { color: '#fff' },
   serviceList: { gap: 10, marginBottom: 14 },
   serviceCard: { alignItems: 'center', backgroundColor: '#fff', borderColor: '#e6e9e3', borderRadius: 16, borderWidth: 1, flexDirection: 'row', padding: 14 },
   serviceCardSelected: { borderColor: '#648a68', borderWidth: 1.5, backgroundColor: '#fcfdfb' },

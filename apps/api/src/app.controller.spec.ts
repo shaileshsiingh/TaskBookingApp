@@ -28,6 +28,7 @@ describe('AppController', () => {
     customer: { name: 'Karan Reddy' },
     requirements: [
       {
+        id: 'requirement-123',
         quantity: 2,
         service: { id: 'home-help', name: 'Home help' },
       },
@@ -46,14 +47,30 @@ describe('AppController', () => {
         status: 'PENDING',
         requirements: [{ id: 'requirement-123', serviceId: 'home-help', quantity: 2 }],
       }),
+      findFirst: vi.fn().mockResolvedValue({
+        id: 'order-123',
+        status: 'PENDING',
+        scheduledAt: new Date(Date.now() + 10 * 60_000),
+        totalAmountPaise: 400000,
+        assignments: [],
+      }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({
+        requirements: [{ id: 'requirement-123', quantity: 2 }],
+        assignments: [{ requirementId: 'requirement-123', status: 'OFFERED' }],
+      }),
       update: vi.fn().mockResolvedValue({}),
     },
     providerProfile: {
       findFirst: vi.fn().mockResolvedValue({ userId: 'provider-123' }),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue({ verified: true }),
     },
     assignment: {
       count: vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       create: vi.fn().mockResolvedValue({
         id: 'assignment-123',
         status: 'OFFERED',
@@ -71,7 +88,8 @@ describe('AppController', () => {
           name: 'Home help',
           description: 'Cleaning and routine support',
           unitPricePaise: 50000,
-          pricingModel: 'PER_PERSON',
+          pricingModel: 'HOURLY',
+          category: { id: 'home-support', name: 'Home support' },
         },
       ]),
       findFirst: vi.fn().mockResolvedValue({ id: 'home-help', unitPricePaise: 50000 }),
@@ -97,7 +115,10 @@ describe('AppController', () => {
         serviceArea: 'Madhapur',
         skills: [{ serviceId: 'home-help' }],
       }),
-      update: vi.fn().mockResolvedValue({ verified: true }),
+      update: vi.fn().mockResolvedValue({ verified: true, available: true }),
+    },
+    assignment: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     order: {
       findMany: vi.fn().mockResolvedValue([createdOrder]),
@@ -141,7 +162,13 @@ describe('AppController', () => {
   describe('services', () => {
     it('returns active services from the database with prices in rupees', async () => {
       await expect(appController.getServices()).resolves.toMatchObject([
-        { id: 'home-help', name: 'Home help', price: 500 },
+        {
+          id: 'home-help',
+          name: 'Home help',
+          categoryId: 'home-support',
+          categoryName: 'Home support',
+          price: 500,
+        },
       ]);
     });
   });
@@ -150,8 +177,7 @@ describe('AppController', () => {
     const bookingInput = {
       customerName: 'Karan Reddy',
       customerPhone: '9876543210',
-      serviceId: 'home-help',
-      people: 2,
+      items: [{ serviceId: 'home-help', people: 2 }],
       hours: 4,
       date: '2026-10-20',
       time: '9:00 AM',
@@ -164,12 +190,17 @@ describe('AppController', () => {
         {
           id: 'order-123',
           customerName: 'Karan Reddy',
-          serviceName: 'Home help',
-          people: 2,
           hours: 4,
           date: '2026-10-20',
           estimatedTotal: 4000,
           status: 'pending',
+          requirements: [
+            {
+              serviceId: 'home-help',
+              serviceName: 'Home help',
+              people: 2,
+            },
+          ],
         },
       ]);
     });
@@ -196,11 +227,13 @@ describe('AppController', () => {
             customerId: 'customer-123',
             totalAmountPaise: 400000,
             requirements: {
-              create: {
-                serviceId: 'home-help',
-                quantity: 2,
-                notes: 'Please bring cleaning supplies',
-              },
+              create: [
+                {
+                  serviceId: 'home-help',
+                  quantity: 2,
+                  notes: 'Please bring cleaning supplies',
+                },
+              ],
             },
           }),
         }),
@@ -208,10 +241,74 @@ describe('AppController', () => {
       expect(result).toMatchObject({
         id: 'order-123',
         customerName: 'Karan Reddy',
-        serviceName: 'Home help',
         estimatedTotal: 4000,
         status: 'pending',
+        requirements: [
+          {
+            serviceId: 'home-help',
+            serviceName: 'Home help',
+            people: 2,
+            lineTotal: 4000,
+          },
+        ],
       });
+    });
+
+    it('creates one requirement per item and sums their pricing-model-aware totals', async () => {
+      prisma.service.findMany.mockResolvedValueOnce([
+        {
+          id: 'home-help',
+          name: 'Home help',
+          unitPricePaise: 50000,
+          pricingModel: 'PER_PERSON',
+          category: { id: 'home-support', name: 'Home support' },
+        },
+        {
+          id: 'event-crew',
+          name: 'Event crew',
+          unitPricePaise: 30000,
+          pricingModel: 'DURATION_BASED',
+          category: { id: 'event-support', name: 'Event support' },
+        },
+      ]);
+      transaction.order.create.mockResolvedValueOnce({
+        ...createdOrder,
+        requirements: [
+          { id: 'requirement-123', quantity: 2, service: { id: 'home-help', name: 'Home help' } },
+          { id: 'requirement-456', quantity: 1, service: { id: 'event-crew', name: 'Event crew' } },
+        ],
+      });
+
+      const result = await appController.createBooking({ headers: {} } as never, {
+        ...bookingInput,
+        items: [
+          { serviceId: 'home-help', people: 2 },
+          { serviceId: 'event-crew', people: 1 },
+        ],
+      });
+
+      // home-help: PER_PERSON -> 500 * 2 = 1000; event-crew: DURATION_BASED -> 300 * 4 hours = 1200
+      expect(transaction.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ totalAmountPaise: 220000 }),
+        }),
+      );
+      expect(result.requirements).toEqual([
+        { serviceId: 'home-help', serviceName: 'Home help', people: 2, lineTotal: 1000 },
+        { serviceId: 'event-crew', serviceName: 'Event crew', people: 1, lineTotal: 1200 },
+      ]);
+    });
+
+    it('rejects a booking with duplicate serviceIds across items', async () => {
+      await expect(
+        appService.createBooking({
+          ...bookingInput,
+          items: [
+            { serviceId: 'home-help', people: 2 },
+            { serviceId: 'home-help', people: 1 },
+          ],
+        }),
+      ).rejects.toThrow('items cannot repeat the same serviceId.');
     });
 
     it('does not allow a provider account to create a customer booking', async () => {
@@ -231,13 +328,27 @@ describe('AppController', () => {
     it('rejects invalid customer phone numbers rather than creating demo bookings', async () => {
       await expect(
         appService.createBooking({ ...bookingInput, customerPhone: '' }),
-      ).rejects.toThrow('customerPhone must contain a valid 10-digit phone number.');
+      ).rejects.toThrow('customerPhone must contain 7 to 15 digits.');
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('assigns only a verified provider with the matching service skill', async () => {
+    it('accepts a shorter test phone number when creating a customer booking', async () => {
       await expect(
-        appController.assignProvider('order-123', { providerId: 'provider-123' }),
+        appService.createBooking({ ...bookingInput, customerPhone: '1234567' }),
+      ).resolves.toMatchObject({ id: 'order-123' });
+      expect(prisma.$transaction).toHaveBeenCalledOnce();
+    });
+
+    it('assigns only a verified provider with the matching service skill', async () => {
+      transaction.assignment.findMany.mockResolvedValueOnce([
+        { requirementId: 'requirement-123', status: 'OFFERED' },
+      ]);
+
+      await expect(
+        appController.assignProvider('order-123', {
+          providerId: 'provider-123',
+          requirementId: 'requirement-123',
+        }),
       ).resolves.toMatchObject({
         id: 'assignment-123',
         providerName: 'Asha Provider',
@@ -247,6 +358,15 @@ describe('AppController', () => {
         where: { id: 'order-123' },
         data: { status: 'PARTIALLY_ASSIGNED' },
       });
+    });
+
+    it('rejects assigning a provider to a requirement that is not on the booking', async () => {
+      await expect(
+        appController.assignProvider('order-123', {
+          providerId: 'provider-123',
+          requirementId: 'requirement-does-not-exist',
+        }),
+      ).rejects.toThrow('This booking has no such service requirement.');
     });
   });
 
@@ -326,6 +446,88 @@ describe('AppController', () => {
     });
   });
 
+  describe('order cancellation', () => {
+    it('cancels an order and applies no fee outside the cancellation window', async () => {
+      transaction.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'PENDING',
+        scheduledAt: new Date(Date.now() + 24 * 60 * 60_000),
+        totalAmountPaise: 400000,
+        assignments: [{ status: 'OFFERED' }],
+      });
+
+      await expect(
+        appController.cancelOrder({ headers: {} } as never, 'order-123'),
+      ).resolves.toMatchObject({ id: 'order-123', status: 'cancelled', cancellationFee: 0 });
+      expect(transaction.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-123' },
+        data: expect.objectContaining({
+          status: 'CANCELLED',
+          cancellationFeePaise: 0,
+        }),
+      });
+      expect(transaction.assignment.updateMany).toHaveBeenCalledWith({
+        where: { orderId: 'order-123', status: { in: ['OFFERED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED'] } },
+        data: { status: 'CANCELLED' },
+      });
+    });
+
+    it('applies a cancellation fee when cancelling close to the scheduled time', async () => {
+      transaction.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'PENDING',
+        scheduledAt: new Date(Date.now() + 10 * 60_000),
+        totalAmountPaise: 400000,
+        assignments: [],
+      });
+
+      await expect(
+        appController.cancelOrder({ headers: {} } as never, 'order-123'),
+      ).resolves.toMatchObject({ id: 'order-123', status: 'cancelled', cancellationFee: 400 });
+    });
+
+    it('blocks cancellation once a provider has started the job', async () => {
+      transaction.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'STARTED',
+        scheduledAt: new Date(Date.now() + 10 * 60_000),
+        totalAmountPaise: 400000,
+        assignments: [{ status: 'STARTED' }],
+      });
+
+      await expect(
+        appController.cancelOrder({ headers: {} } as never, 'order-123'),
+      ).rejects.toThrow('This booking can no longer be cancelled because work has already started.');
+    });
+
+    it('blocks cancellation of an order that is already in a terminal state', async () => {
+      transaction.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'DISPUTED',
+        scheduledAt: new Date(Date.now() + 10 * 60_000),
+        totalAmountPaise: 400000,
+        assignments: [],
+      });
+
+      await expect(
+        appController.cancelOrder({ headers: {} } as never, 'order-123'),
+      ).rejects.toThrow('This booking can no longer be cancelled.');
+    });
+
+    it('does not allow a provider account to cancel a customer booking', async () => {
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      await expect(
+        appController.cancelOrder({ headers: {} } as never, 'order-123'),
+      ).rejects.toThrow('Only customer accounts can cancel their bookings.');
+    });
+  });
+
   describe('providers', () => {
     it('returns assigned jobs only for the signed-in provider', async () => {
       authService.getCurrentApplicationUser.mockResolvedValueOnce({
@@ -381,7 +583,230 @@ describe('AppController', () => {
         'provider-123',
         'assignment-123',
         'accepted',
+        undefined,
       );
+    });
+
+    it('finds a replacement automatically when a provider cancels an accepted job', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'ACCEPTED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        order: {
+          status: 'ACCEPTED',
+          requirements: [{ id: 'requirement-123', quantity: 2, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'ACCEPTED' },
+            { id: 'assignment-other', requirementId: 'requirement-123', status: 'OFFERED' },
+          ],
+        },
+      });
+      transaction.order.findUnique.mockResolvedValueOnce({ status: 'REASSIGNMENT_REQUIRED' });
+      transaction.assignment.findMany.mockResolvedValueOnce([{ providerId: 'provider-other' }]);
+      transaction.providerProfile.findMany.mockResolvedValueOnce([{ userId: 'provider-456' }]);
+      transaction.assignment.groupBy.mockResolvedValueOnce([]);
+      transaction.order.findUniqueOrThrow.mockResolvedValueOnce({
+        requirements: [{ id: 'requirement-123', quantity: 2 }],
+        assignments: [
+          { requirementId: 'requirement-123', status: 'OFFERED' },
+          { requirementId: 'requirement-123', status: 'OFFERED' },
+        ],
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'cancelled'),
+      ).resolves.toEqual({ id: 'assignment-999', status: 'cancelled' });
+
+      expect(transaction.assignment.create).toHaveBeenCalledWith({
+        data: { orderId: 'order-123', requirementId: 'requirement-123', providerId: 'provider-456' },
+      });
+      expect(transaction.order.update).toHaveBeenNthCalledWith(1, {
+        where: { id: 'order-123' },
+        data: { status: 'REASSIGNMENT_REQUIRED' },
+      });
+      expect(transaction.order.update).toHaveBeenNthCalledWith(2, {
+        where: { id: 'order-123' },
+        data: { status: 'ASSIGNED' },
+      });
+    });
+
+    it('leaves the booking reassignment-required when no replacement provider is available', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'ACCEPTED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        order: {
+          status: 'ACCEPTED',
+          requirements: [{ id: 'requirement-123', quantity: 2, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'ACCEPTED' },
+            { id: 'assignment-other', requirementId: 'requirement-123', status: 'OFFERED' },
+          ],
+        },
+      });
+      transaction.order.findUnique.mockResolvedValueOnce({ status: 'REASSIGNMENT_REQUIRED' });
+      transaction.assignment.findMany.mockResolvedValueOnce([{ providerId: 'provider-other' }]);
+      transaction.providerProfile.findMany.mockResolvedValueOnce([]);
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'cancelled'),
+      ).resolves.toEqual({ id: 'assignment-999', status: 'cancelled' });
+
+      expect(transaction.assignment.create).not.toHaveBeenCalled();
+      expect(transaction.order.update).toHaveBeenCalledTimes(1);
+      expect(transaction.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-123' },
+        data: { status: 'REASSIGNMENT_REQUIRED' },
+      });
+    });
+
+    it('generates a start OTP when a provider marks arrival', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'ON_THE_WAY',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        startOtp: null,
+        order: {
+          status: 'ACCEPTED',
+          requirements: [{ id: 'requirement-123', quantity: 1, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'ON_THE_WAY' },
+          ],
+        },
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'arrived'),
+      ).resolves.toEqual({ id: 'assignment-999', status: 'arrived' });
+
+      expect(transaction.assignment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ startOtp: expect.stringMatching(/^\d{4}$/) }),
+        }),
+      );
+    });
+
+    it('rejects starting a job with an incorrect OTP', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'ARRIVED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        startOtp: '4321',
+        order: {
+          status: 'ACCEPTED',
+          requirements: [{ id: 'requirement-123', quantity: 1, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'ARRIVED' },
+          ],
+        },
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'started', '0000'),
+      ).rejects.toThrow('Incorrect OTP. Ask the customer for the code shown in their app.');
+      expect(transaction.assignment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('starts a job once the correct OTP is supplied and clears it', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'ARRIVED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        startOtp: '4321',
+        order: {
+          status: 'ACCEPTED',
+          requirements: [{ id: 'requirement-123', quantity: 1, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'ARRIVED' },
+          ],
+        },
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'started', '4321'),
+      ).resolves.toEqual({ id: 'assignment-999', status: 'started' });
+
+      expect(transaction.assignment.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ startOtp: null }),
+        }),
+      );
+    });
+
+    it('lets a verified provider toggle their own availability', async () => {
+      prisma.providerProfile.findUnique.mockResolvedValueOnce({ verified: true });
+      prisma.providerProfile.update.mockResolvedValueOnce({ available: false });
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      await expect(
+        appController.setProviderAvailability({ headers: {} } as never, { available: false }),
+      ).resolves.toEqual({ id: 'provider-123', available: false });
+      expect(prisma.providerProfile.update).toHaveBeenCalledWith({
+        where: { userId: 'provider-123' },
+        data: { available: false },
+      });
+    });
+
+    it('blocks an unverified provider from toggling availability', async () => {
+      prisma.providerProfile.findUnique.mockResolvedValueOnce({ verified: false });
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      await expect(
+        appController.setProviderAvailability({ headers: {} } as never, { available: true }),
+      ).rejects.toThrow('Your provider account is not verified.');
+    });
+
+    it('summarizes a provider\'s completed, customer-confirmed earnings', async () => {
+      prisma.providerProfile.findUnique.mockResolvedValueOnce({ verified: true });
+      prisma.assignment.findMany.mockResolvedValueOnce([
+        {
+          id: 'assignment-111',
+          completedAt: new Date('2026-10-18T10:00:00.000Z'),
+          order: { durationMinutes: 240, customer: { name: 'Karan Reddy' } },
+          requirement: {
+            quantity: 2,
+            service: { name: 'Home help', unitPricePaise: 50000, pricingModel: 'HOURLY' },
+          },
+        },
+      ]);
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      // HOURLY: 500 * 2 people * 4 hours = 4000 total, split across 2 assigned slots = 2000 each.
+      await expect(
+        appController.getProviderEarnings({ headers: {} } as never),
+      ).resolves.toEqual({
+        totalJobsCompleted: 1,
+        totalEarnings: 2000,
+        recent: [
+          {
+            assignmentId: 'assignment-111',
+            serviceName: 'Home help',
+            customerName: 'Karan Reddy',
+            completedAt: '2026-10-18T10:00:00.000Z',
+            amount: 2000,
+          },
+        ],
+      });
     });
 
     it('creates a provider pending verification with selected service skills', async () => {

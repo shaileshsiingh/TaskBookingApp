@@ -132,6 +132,7 @@ model ProviderProfile {
   id          String          @id @default(cuid())
   userId      String          @unique
   verified    Boolean         @default(false)
+  available   Boolean         @default(true)
   serviceArea String?
   user        User            @relation(fields: [userId], references: [id])
   skills      ProviderSkill[]
@@ -178,6 +179,8 @@ model Order {
   instructions     String?
   currency         String        @default("INR")
   totalAmountPaise Int?
+  cancelledAt      DateTime?
+  cancellationFeePaise Int?
   customer         User          @relation("CustomerOrders", fields: [customerId], references: [id])
   requirements     Requirement[]
   assignments      Assignment[]
@@ -204,6 +207,7 @@ model Assignment {
   status              AssignmentStatus @default(OFFERED)
   offeredAt           DateTime         @default(now())
   acceptedAt          DateTime?
+  startOtp            String?
   completedAt         DateTime?
   customerConfirmedAt DateTime?
   order               Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)

@@ -137,7 +137,10 @@ export class AuthService {
       if (typeof suppliedPhone !== 'string') {
         throw new BadRequestException('Enter a mobile number to finish setting up your account.');
       }
-      phone = this.toApplicationPhone(suppliedPhone);
+      phone = this.toApplicationPhone(
+        suppliedPhone,
+        this.getAuthMode() === 'email',
+      );
     }
     const authName =
       typeof sessionUser.name === 'string' ? sessionUser.name.trim() : '';
@@ -203,7 +206,7 @@ export class AuthService {
         role: true,
         name: true,
         phone: true,
-        providerProfile: { select: { verified: true } },
+        providerProfile: { select: { verified: true, available: true } },
       },
     });
     if (!linkedUser && this.getAuthMode() === 'email') {
@@ -228,7 +231,7 @@ export class AuthService {
               role: true,
               name: true,
               phone: true,
-              providerProfile: { select: { verified: true } },
+              providerProfile: { select: { verified: true, available: true } },
             },
           })
         : null);
@@ -268,7 +271,7 @@ export class AuthService {
           role: true,
           name: true,
           phone: true,
-          providerProfile: { select: { verified: true } },
+          providerProfile: { select: { verified: true, available: true } },
         },
       });
       return this.toPublicUser(user);
@@ -300,7 +303,7 @@ export class AuthService {
           role: true,
           name: true,
           phone: true,
-          providerProfile: { select: { verified: true } },
+          providerProfile: { select: { verified: true, available: true } },
         },
       });
       return this.toPublicUser(user);
@@ -355,13 +358,20 @@ export class AuthService {
         role: true,
         name: true,
         phone: true,
-        providerProfile: { select: { verified: true } },
+        providerProfile: { select: { verified: true, available: true } },
       },
     });
     return this.toPublicUser(user);
   }
 
-  private toApplicationPhone(phoneNumber: string): string {
+  private toApplicationPhone(phoneNumber: string, allowTestNumber = false): string {
+    if (allowTestNumber) {
+      const digits = phoneNumber.replace(/\D/g, '');
+      if (/^\d{7,15}$/.test(digits)) return digits;
+      throw new BadRequestException(
+        'Enter 7 to 15 digits for the test mobile number.',
+      );
+    }
     if (/^[6-9]\d{9}$/.test(phoneNumber)) return phoneNumber;
     if (/^\+91[6-9]\d{9}$/.test(phoneNumber)) return phoneNumber.slice(3);
     throw new BadRequestException('Enter a valid 10-digit Indian mobile number.');
@@ -382,7 +392,7 @@ export class AuthService {
     role: UserRole;
     name: string;
     phone: string;
-    providerProfile: { verified: boolean } | null;
+    providerProfile: { verified: boolean; available: boolean } | null;
   }) {
     return {
       id: user.id,
@@ -390,6 +400,7 @@ export class AuthService {
       name: user.name,
       phone: user.phone,
       providerVerified: user.providerProfile?.verified ?? false,
+      providerAvailable: user.providerProfile?.available ?? true,
     };
   }
 }

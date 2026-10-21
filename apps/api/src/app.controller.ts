@@ -46,8 +46,11 @@ export class AppController {
 
   @Post('bookings/:id/assignments')
   @UseGuards(AdminApiKeyGuard)
-  assignProvider(@Param('id') id: string, @Body() input: { providerId?: unknown }) {
-    return this.appService.assignProvider(id, input.providerId);
+  assignProvider(
+    @Param('id') id: string,
+    @Body() input: { providerId?: unknown; requirementId?: unknown },
+  ) {
+    return this.appService.assignProvider(id, input.providerId, input.requirementId);
   }
 
   @Post('bookings')
@@ -73,6 +76,15 @@ export class AppController {
       throw new ForbiddenException('Only customer accounts can view their bookings.');
     }
     return this.appService.getCustomerBookings(user.id);
+  }
+
+  @Patch('customer/orders/:id/cancellation')
+  async cancelOrder(@Req() request: Request, @Param('id') id: string) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can cancel their bookings.');
+    }
+    return this.appService.cancelOrder(user.id, id);
   }
 
   @Patch('customer/assignments/:id/confirmation')
@@ -118,13 +130,34 @@ export class AppController {
   async updateProviderAssignment(
     @Req() request: Request,
     @Param('id') id: string,
-    @Body() input: { status?: unknown },
+    @Body() input: { status?: unknown; otp?: unknown },
   ) {
     const user = await this.authService.getCurrentApplicationUser(request.headers);
     if (user.role !== UserRole.PROVIDER) {
       throw new ForbiddenException('Only provider accounts can update assigned jobs.');
     }
-    return this.appService.updateProviderAssignment(user.id, id, input.status);
+    return this.appService.updateProviderAssignment(user.id, id, input.status, input.otp);
+  }
+
+  @Patch('provider/availability')
+  async setProviderAvailability(
+    @Req() request: Request,
+    @Body() input: { available?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.PROVIDER) {
+      throw new ForbiddenException('Only provider accounts can update their availability.');
+    }
+    return this.appService.setProviderAvailability(user.id, input.available);
+  }
+
+  @Get('provider/earnings')
+  async getProviderEarnings(@Req() request: Request) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.PROVIDER) {
+      throw new ForbiddenException('Only provider accounts can view earnings.');
+    }
+    return this.appService.getProviderEarnings(user.id);
   }
 
   @Get('providers')

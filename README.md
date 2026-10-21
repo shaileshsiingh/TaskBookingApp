@@ -132,7 +132,8 @@ EXPO_PUBLIC_AUTH_MODE=email
 
 Restart both the API and Expo after changing these values. The app will show
 email/password sign-up and sign-in. New accounts still provide a contact phone
-number for bookings; phone numbers are not verified in this testing mode.
+number for bookings; in this testing mode, any 7–15 digit number is accepted.
+Phone numbers are not verified.
 Provider accounts remain subject to admin review. **Do not use email mode for
 production**: it skips phone verification. To return to OTP, set
 `AUTH_MODE=phone` and `EXPO_PUBLIC_AUTH_MODE=phone` (or remove the mobile setting),
@@ -157,6 +158,11 @@ The initial database model is intentionally generic:
 An order can contain multiple requirements, and each requirement can request
 multiple providers. Every provider assignment has its own status so that partial
 assignment and replacement do not require splitting a customer order.
+
+The demo service browser groups active database services by category. The
+current development catalog uses the existing Home help, Moving help, and
+Event crew services and their existing demo prices; it does not copy another
+marketplace's full catalog or assets.
 
 ## Next implementation steps
 

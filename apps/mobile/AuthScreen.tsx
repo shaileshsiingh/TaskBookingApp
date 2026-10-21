@@ -84,7 +84,7 @@ export default function AuthScreen({
     };
   }, [role, services.length]);
 
-  const phoneNumber = `+91${phone}`;
+  const phoneNumber = emailPasswordMode ? phone : `+91${phone}`;
   const providerDetailsValid =
     role === 'CUSTOMER' ||
     (serviceArea.trim().length > 0 && selectedServiceIds.length > 0);
@@ -147,8 +147,16 @@ export default function AuthScreen({
         setError('Enter your name.');
         return;
       }
-      if (!/^[6-9]\d{9}$/.test(phone)) {
-        setError('Enter a valid 10-digit Indian mobile number.');
+      if (
+        emailPasswordMode
+          ? !/^\d{7,15}$/.test(phone)
+          : !/^[6-9]\d{9}$/.test(phone)
+      ) {
+        setError(
+          emailPasswordMode
+            ? 'Enter 7 to 15 digits for the test mobile number.'
+            : 'Enter a valid 10-digit Indian mobile number.',
+        );
         return;
       }
       if (role === 'PROVIDER' && !providerDetailsValid) {
@@ -334,17 +342,30 @@ export default function AuthScreen({
                   />
                   <Text style={styles.fieldLabel}>MOBILE NUMBER</Text>
                   <View style={styles.phoneRow}>
-                    <Text style={styles.countryCode}>+91</Text>
                     <TextInput
-                      accessibilityLabel="10-digit mobile number"
+                      accessibilityLabel={
+                        emailPasswordMode
+                          ? 'Test mobile number'
+                          : '10-digit mobile number'
+                      }
                       autoComplete="tel-national"
                       keyboardType="phone-pad"
-                      maxLength={10}
+                      maxLength={emailPasswordMode ? 15 : 10}
                       onChangeText={(value: string) => {
                         const digits = value.replace(/\D/g, '');
-                        setPhone(digits.length > 10 ? digits.slice(-10) : digits);
+                        setPhone(
+                          digits.length > (emailPasswordMode ? 15 : 10)
+                            ? digits.slice(
+                                emailPasswordMode ? -15 : -10,
+                              )
+                            : digits,
+                        );
                       }}
-                      placeholder="10-digit number"
+                      placeholder={
+                        emailPasswordMode
+                          ? '7–15 digits for testing'
+                          : '10-digit number'
+                      }
                       placeholderTextColor="#9aa39a"
                       style={styles.phoneInput}
                       value={phone}

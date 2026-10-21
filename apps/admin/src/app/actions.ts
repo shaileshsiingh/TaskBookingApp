@@ -108,7 +108,12 @@ export async function assignProvider(formData: FormData) {
 
   const bookingId = formData.get("bookingId");
   const providerId = formData.get("providerId");
-  if (typeof bookingId !== "string" || typeof providerId !== "string") {
+  const requirementId = formData.get("requirementId");
+  if (
+    typeof bookingId !== "string" ||
+    typeof providerId !== "string" ||
+    typeof requirementId !== "string"
+  ) {
     redirect("/?error=invalid-assignment");
   }
 
@@ -116,7 +121,7 @@ export async function assignProvider(formData: FormData) {
     await requestAdminApi(
       `/bookings/${encodeURIComponent(bookingId)}/assignments`,
       "POST",
-      { providerId },
+      { providerId, requirementId },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not assign provider.";

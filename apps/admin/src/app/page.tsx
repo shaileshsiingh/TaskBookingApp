@@ -15,18 +15,15 @@ type Provider = {
   phone: string;
   serviceArea: string | null;
   verified: boolean;
+  available: boolean;
   services: { id: string; name: string }[];
 };
 
-type Booking = {
+type Requirement = {
   id: string;
-  customerName: string;
   serviceId: string;
   serviceName: string;
   people: number;
-  date: string;
-  time: string;
-  estimatedTotal: number;
   status: string;
   assignments: {
     id: string;
@@ -34,6 +31,16 @@ type Booking = {
     providerName: string;
     status: string;
   }[];
+};
+
+type Booking = {
+  id: string;
+  customerName: string;
+  date: string;
+  time: string;
+  estimatedTotal: number;
+  status: string;
+  requirements: Requirement[];
 };
 
 export const instant = false;
@@ -121,7 +128,9 @@ export default async function Home({
     (booking) => !["completed", "cancelled", "failed", "refunded"].includes(booking.status),
   ).length;
   const assignedBookings = bookings.filter((booking) =>
-    booking.assignments.some((assignment) => !["cancelled", "rejected"].includes(assignment.status)),
+    booking.requirements.some((requirement) =>
+      requirement.assignments.some((assignment) => !["cancelled", "rejected"].includes(assignment.status)),
+    ),
   ).length;
   const averageValue = bookings.length
     ? bookings.reduce((total, booking) => total + booking.estimatedTotal, 0) / bookings.length
@@ -181,48 +190,64 @@ export default async function Home({
                     <tr><th>Booking</th><th>Customer</th><th>Service</th><th>When</th><th>Total</th><th>Status / assignment</th></tr>
                   </thead>
                   <tbody>
-                    {bookings.map((booking) => {
-                      const activeAssignments = booking.assignments.filter(
-                        (assignment) => !["cancelled", "rejected"].includes(assignment.status),
-                      );
-                      const eligibleProviders = providers.filter(
-                        (provider) => provider.verified && provider.services.some((service) => service.id === booking.serviceId),
-                      );
-                      const assignableProviders = eligibleProviders.filter(
-                        (provider) => !activeAssignments.some((assignment) => assignment.providerId === provider.id),
-                      );
-                      const slotsRemaining = Math.max(booking.people - activeAssignments.length, 0);
-                      return (
-                        <tr key={booking.id}>
-                          <td>{booking.id}</td>
-                          <td>{booking.customerName}</td>
-                          <td>{booking.serviceName}</td>
-                          <td>
-                            {new Date(`${booking.date}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                            <div className={styles.timeCell}>{booking.time}</div>
-                          </td>
-                          <td>{formatPrice(booking.estimatedTotal)}</td>
-                          <td>
-                            <span className={`${styles.statusPill} ${getStatusClass(booking.status)}`}>{booking.status.replaceAll("_", " ")}</span>
-                            {activeAssignments.map((assignment) => (
-                              <div className={styles.assignmentLine} key={assignment.id}>
-                                {assignment.providerName} · {assignment.status.replaceAll("_", " ")}
+                    {bookings.map((booking) => (
+                      <tr key={booking.id}>
+                        <td>{booking.id}</td>
+                        <td>{booking.customerName}</td>
+                        <td>
+                          {booking.requirements.map((requirement) => (
+                            <div key={requirement.id}>
+                              {requirement.serviceName} · {requirement.people}{" "}
+                              {requirement.people === 1 ? "person" : "people"}
+                            </div>
+                          ))}
+                        </td>
+                        <td>
+                          {new Date(`${booking.date}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          <div className={styles.timeCell}>{booking.time}</div>
+                        </td>
+                        <td>{formatPrice(booking.estimatedTotal)}</td>
+                        <td>
+                          <span className={`${styles.statusPill} ${getStatusClass(booking.status)}`}>{booking.status.replaceAll("_", " ")}</span>
+                          {booking.requirements.map((requirement) => {
+                            const activeAssignments = requirement.assignments.filter(
+                              (assignment) => !["cancelled", "rejected"].includes(assignment.status),
+                            );
+                            const eligibleProviders = providers.filter(
+                              (provider) =>
+                                provider.verified &&
+                                provider.available &&
+                                provider.services.some((service) => service.id === requirement.serviceId),
+                            );
+                            const assignableProviders = eligibleProviders.filter(
+                              (provider) => !activeAssignments.some((assignment) => assignment.providerId === provider.id),
+                            );
+                            const slotsRemaining = Math.max(requirement.people - activeAssignments.length, 0);
+                            return (
+                              <div className={styles.requirementBlock} key={requirement.id}>
+                                <div className={styles.timeCell}>{requirement.serviceName}</div>
+                                {activeAssignments.map((assignment) => (
+                                  <div className={styles.assignmentLine} key={assignment.id}>
+                                    {assignment.providerName} · {assignment.status.replaceAll("_", " ")}
+                                  </div>
+                                ))}
+                                {slotsRemaining > 0 && assignableProviders.length > 0 ? (
+                                  <form action={assignProvider} className={styles.inlineForm}>
+                                    <input name="bookingId" type="hidden" value={booking.id} />
+                                    <input name="requirementId" type="hidden" value={requirement.id} />
+                                    <select aria-label={`Choose provider for ${requirement.serviceName} on booking ${booking.id}`} className={styles.selectInput} name="providerId" required>
+                                      <option value="">Assign provider…</option>
+                                      {assignableProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+                                    </select>
+                                    <button className={styles.smallButton} type="submit">Assign</button>
+                                  </form>
+                                ) : null}
                               </div>
-                            ))}
-                            {slotsRemaining > 0 && assignableProviders.length > 0 ? (
-                              <form action={assignProvider} className={styles.inlineForm}>
-                                <input name="bookingId" type="hidden" value={booking.id} />
-                                <select aria-label={`Choose provider for booking ${booking.id}`} className={styles.selectInput} name="providerId" required>
-                                  <option value="">Assign provider…</option>
-                                  {assignableProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
-                                </select>
-                                <button className={styles.smallButton} type="submit">Assign</button>
-                              </form>
-                            ) : null}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            );
+                          })}
+                        </td>
+                      </tr>
+                    ))}
                     {bookings.length === 0 ? <tr><td colSpan={6}>No bookings have been placed yet.</td></tr> : null}
                   </tbody>
                 </table>
@@ -242,6 +267,11 @@ export default async function Home({
                         </span>
                       </div>
                       <p className={styles.providerSkills}>{provider.services.map((service) => service.name).join(", ")}</p>
+                      {provider.verified ? (
+                        <span className={`${styles.statusPill} ${provider.available ? styles.statusAssigned : styles.statusPending}`}>
+                          {provider.available ? "available" : "off duty"}
+                        </span>
+                      ) : null}
                       <form action={setProviderVerification}>
                         <input name="providerId" type="hidden" value={provider.id} />
                         <input name="verified" type="hidden" value={String(!provider.verified)} />
