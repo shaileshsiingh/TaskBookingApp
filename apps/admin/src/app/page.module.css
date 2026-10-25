@@ -472,6 +472,77 @@
   border-top: none;
 }
 
+.panelHeaderSpaced {
+  margin-top: 28px;
+}
+
+.sectionSpaced {
+  margin-top: 14px;
+}
+
+.serviceEditList {
+  display: grid;
+  gap: 14px;
+}
+
+.serviceEditRow {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #edf1ed;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.serviceEditHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #2a3930;
+  font-size: 13px;
+}
+
+.dangerButton {
+  border: 0;
+  border-radius: 9px;
+  background: #fbeceb;
+  color: #a1392f;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 10px 14px;
+}
+
+.disputeCard {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #f0e2c6;
+  border-radius: 12px;
+  background: #fffaf0;
+  padding: 14px;
+}
+
+.disputeReason {
+  margin: 0;
+  color: #5c4a26;
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.disputeActions {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.disputeForm {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
 .loginPage {
   display: grid;
   min-height: 100vh;
@@ -565,7 +636,8 @@
 
   .metricsGrid,
   .panelGrid,
-  .providerGrid {
+  .providerGrid,
+  .disputeActions {
     grid-template-columns: 1fr;
   }
 

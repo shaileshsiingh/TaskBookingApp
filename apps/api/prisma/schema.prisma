@@ -181,6 +181,11 @@ model Order {
   totalAmountPaise Int?
   cancelledAt      DateTime?
   cancellationFeePaise Int?
+  disputeReason    String?
+  disputedAt       DateTime?
+  resolutionNote   String?
+  refundedAt       DateTime?
+  refundAmountPaise Int?
   customer         User          @relation("CustomerOrders", fields: [customerId], references: [id])
   requirements     Requirement[]
   assignments      Assignment[]

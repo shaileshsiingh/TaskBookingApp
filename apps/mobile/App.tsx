@@ -17,6 +17,7 @@ import ProviderJobsScreen from './ProviderJobsScreen';
 import ProviderStatusScreen from './ProviderStatusScreen';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
+import { calculateLineAmount, PricingModel } from './lib/pricing';
 
 const timeSlots = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM'];
 const maximumPeople = 20;
@@ -28,9 +29,15 @@ type Service = {
   categoryId: string;
   categoryName: string;
   price: number;
+  pricingModel: PricingModel;
   icon: string;
   color: string;
   area?: string;
+};
+
+type CartItem = {
+  service: Service;
+  people: number;
 };
 
 type BookingResponse = {
@@ -93,11 +100,10 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [availableServices, setAvailableServices] = useState<Service[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [service, setService] = useState<Service | null>(null);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [isLoadingServices, setIsLoadingServices] = useState(true);
   const [isApiConnected, setIsApiConnected] = useState(false);
   const [serviceError, setServiceError] = useState('');
-  const [people, setPeople] = useState(1);
   const [hours, setHours] = useState(2);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -108,7 +114,11 @@ export default function App() {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastBookingId, setLastBookingId] = useState<string | null>(null);
-  const total = (service?.price ?? 0) * people * hours;
+  const cartTotal = cart.reduce(
+    (sum, item) =>
+      sum + calculateLineAmount(item.service.pricingModel, item.service.price, item.people, hours),
+    0,
+  );
   const connectionLabel = isLoadingServices ? 'CONNECTING' : isApiConnected ? 'LIVE' : 'OFFLINE';
   const categories = Array.from(
     new Map(
@@ -211,7 +221,6 @@ export default function App() {
             setServiceError('No services are available right now.');
             return;
           }
-          setService(response[0]);
           setAvailableServices(response);
         }
       } catch (loadError) {
@@ -229,6 +238,21 @@ export default function App() {
       isMounted = false;
     };
   }, []);
+
+  const toggleCartItem = (item: Service) => {
+    setCart((current) => {
+      if (current.some((entry) => entry.service.id === item.id)) {
+        return current.filter((entry) => entry.service.id !== item.id);
+      }
+      return [...current, { service: item, people: 1 }];
+    });
+  };
+
+  const updateCartPeople = (serviceId: string, people: number) => {
+    setCart((current) =>
+      current.map((entry) => (entry.service.id === serviceId ? { ...entry, people } : entry)),
+    );
+  };
 
   const continueToReview = () => {
     if (!customerName.trim() || !/^\d{10}$/.test(customerPhone.replace(/\D/g, ''))) {
@@ -248,8 +272,8 @@ export default function App() {
       setError('Sign in with a customer account to place a booking.');
       return;
     }
-    if (!service) {
-      setError('Choose an available service before placing your booking.');
+    if (cart.length === 0) {
+      setError('Choose at least one service before placing your booking.');
       return;
     }
     setError('');
@@ -269,7 +293,7 @@ export default function App() {
         body: JSON.stringify({
           customerName,
           customerPhone,
-          items: [{ serviceId: service.id, people }],
+          items: cart.map((entry) => ({ serviceId: entry.service.id, people: entry.people })),
           hours,
           date,
           time,
@@ -289,8 +313,7 @@ export default function App() {
 
   const startAgain = () => {
     setStep(0);
-    setService(availableServices[0] ?? null);
-    setPeople(1);
+    setCart([]);
     setHours(2);
     setCustomerName(currentUser?.name ?? '');
     setCustomerPhone(currentUser?.phone ?? '');
@@ -430,7 +453,9 @@ export default function App() {
 
             <View style={styles.sectionHeading}>
               <Text style={styles.sectionTitle}>What do you need help with?</Text>
-              <Text style={styles.sectionHint}>{isLoadingServices ? 'Loading services…' : 'Choose one service'}</Text>
+              <Text style={styles.sectionHint}>
+                {isLoadingServices ? 'Loading services…' : 'Add as many services as you need'}
+              </Text>
             </View>
 
             {categories.length > 0 ? (
@@ -449,18 +474,7 @@ export default function App() {
                     key={category.id}
                     label={category.name}
                     selected={selectedCategoryId === category.id}
-                    onPress={() => {
-                      setSelectedCategoryId(category.id);
-                      const firstService = availableServices.find(
-                        (item) => item.categoryId === category.id,
-                      );
-                      if (
-                        firstService &&
-                        service?.categoryId !== category.id
-                      ) {
-                        setService(firstService);
-                      }
-                    }}
+                    onPress={() => setSelectedCategoryId(category.id)}
                   />
                 ))}
               </ScrollView>
@@ -468,27 +482,41 @@ export default function App() {
 
             <View style={styles.serviceList}>
               {visibleServices.map((item) => {
-                const selected = service?.id === item.id;
+                const cartEntry = cart.find((entry) => entry.service.id === item.id);
+                const selected = Boolean(cartEntry);
                 return (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    key={item.id}
-                    onPress={() => setService(item)}
-                    style={[styles.serviceCard, selected && styles.serviceCardSelected]}
-                  >
-                    <View style={[styles.serviceIcon, { backgroundColor: item.color }]}>
-                      <Text style={styles.serviceIconText}>{item.icon}</Text>
-                    </View>
-                    <View style={styles.serviceCopy}>
-                      <Text style={styles.serviceName}>{item.name}</Text>
-                      <Text style={styles.serviceDetail}>{item.detail}</Text>
-                      <Text style={styles.servicePrice}>{formatPrice(item.price)} <Text style={styles.priceUnit}>/ person / hour</Text></Text>
-                    </View>
-                    <View style={[styles.radio, selected && styles.radioSelected]}>
-                      {selected ? <View style={styles.radioDot} /> : null}
-                    </View>
-                  </Pressable>
+                  <View key={item.id} style={[styles.serviceCard, selected && styles.serviceCardSelected]}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => toggleCartItem(item)}
+                      style={styles.serviceCardTouchable}
+                    >
+                      <View style={[styles.serviceIcon, { backgroundColor: item.color }]}>
+                        <Text style={styles.serviceIconText}>{item.icon}</Text>
+                      </View>
+                      <View style={styles.serviceCopy}>
+                        <Text style={styles.serviceName}>{item.name}</Text>
+                        <Text style={styles.serviceDetail}>{item.detail}</Text>
+                        <Text style={styles.servicePrice}>{formatPrice(item.price)} <Text style={styles.priceUnit}>/ person / hour</Text></Text>
+                      </View>
+                      <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+                        {selected ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                      </View>
+                    </Pressable>
+                    {cartEntry ? (
+                      <View style={styles.cartStepperRow}>
+                        <Text style={styles.counterLabel}>People needed</Text>
+                        <Counter
+                          label={`${item.name} people`}
+                          value={cartEntry.people}
+                          minimum={1}
+                          maximum={maximumPeople}
+                          onChange={(value) => updateCartPeople(item.id, value)}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
                 );
               })}
             </View>
@@ -498,7 +526,15 @@ export default function App() {
               <Text style={styles.trustIcon}>✓</Text>
               <Text style={styles.trustText}>One booking can bring your whole team together.</Text>
             </View>
-            <PrimaryButton disabled={isLoadingServices || availableServices.length === 0} label="Continue" onPress={() => setStep(1)} />
+            {cart.length > 0 ? (
+              <View style={styles.cartSummaryBar}>
+                <Text style={styles.cartSummaryText}>
+                  {cart.length} {cart.length === 1 ? 'service' : 'services'} selected
+                </Text>
+                <Text style={styles.cartSummaryAmount}>{formatPrice(cartTotal)}</Text>
+              </View>
+            ) : null}
+            <PrimaryButton disabled={isLoadingServices || cart.length === 0} label="Continue" onPress={() => setStep(1)} />
           </>
         ) : null}
 
@@ -533,22 +569,32 @@ export default function App() {
 
             <View style={styles.sectionCard}>
               <View style={styles.sectionCardHeader}>
-                <View>
-                  <Text style={styles.fieldLabel}>SELECTED SERVICE</Text>
-                  <Text style={styles.selectedService}>{service?.name}</Text>
-                </View>
+                <Text style={styles.fieldLabel}>SELECTED SERVICES</Text>
                 <Pressable accessibilityRole="button" onPress={() => setStep(0)} hitSlop={8}>
-                  <Text style={styles.editLink}>Change</Text>
+                  <Text style={styles.editLink}>Edit</Text>
                 </Pressable>
               </View>
-              <View style={styles.ratePill}><Text style={styles.rateText}>{formatPrice(service?.price ?? 0)} / person / hour</Text></View>
-              <View style={styles.counterRow}>
-                <View style={styles.counterCopy}>
-                  <Text style={styles.counterLabel}>People needed</Text>
-                  <Text style={styles.counterHint}>Book your team in one order</Text>
+              {cart.map((entry, index) => (
+                <View
+                  key={entry.service.id}
+                  style={[styles.cartLineRow, index === 0 && styles.cartLineRowFirst]}
+                >
+                  <View style={styles.cartLineCopy}>
+                    <Text style={styles.selectedService}>{entry.service.name}</Text>
+                    <Text style={styles.counterHint}>{formatPrice(entry.service.price)} / person / hour</Text>
+                  </View>
+                  <Counter
+                    label={`${entry.service.name} people`}
+                    value={entry.people}
+                    minimum={1}
+                    maximum={maximumPeople}
+                    onChange={(value) => updateCartPeople(entry.service.id, value)}
+                  />
                 </View>
-                <Counter label="people" value={people} minimum={1} maximum={maximumPeople} onChange={setPeople} />
-              </View>
+              ))}
+            </View>
+
+            <View style={styles.sectionCard}>
               <View style={styles.counterRow}>
                 <View style={styles.counterCopy}>
                   <Text style={styles.counterLabel}>Duration</Text>
@@ -625,9 +671,11 @@ export default function App() {
               <View style={styles.estimateTop}>
                 <View>
                   <Text style={styles.estimateLabel}>ESTIMATED TOTAL</Text>
-                  <Text style={styles.estimateFormula}>{formatPrice(service?.price ?? 0)} × {people} people × {hours} {hours === 1 ? 'hour' : 'hours'}</Text>
+                  <Text style={styles.estimateFormula}>
+                    {cart.length} {cart.length === 1 ? 'service' : 'services'} · {hours} {hours === 1 ? 'hour' : 'hours'}
+                  </Text>
                 </View>
-                <Text style={styles.estimateAmount}>{formatPrice(total)}</Text>
+                <Text style={styles.estimateAmount}>{formatPrice(cartTotal)}</Text>
               </View>
               <Text style={styles.estimateFootnote}>Estimate only. Final price is confirmed before payment.</Text>
             </View>
@@ -643,16 +691,28 @@ export default function App() {
             <Text style={styles.title}>Does everything look right?</Text>
             <Text style={styles.subtitle}>You can go back and make changes before confirming.</Text>
             <View style={styles.sectionCard}>
-              <View style={styles.reviewHeader}>
-                <View style={[styles.reviewIcon, { backgroundColor: service?.color ?? '#e9f1e5' }]}><Text style={styles.serviceIconText}>{service?.icon}</Text></View>
-                <View style={styles.reviewServiceCopy}>
-                  <Text style={styles.reviewMain}>{service?.name}</Text>
-                  <Text style={styles.reviewSub}>{formatPrice(service?.price ?? 0)} / person / hour</Text>
-                </View>
+              <View style={styles.sectionCardHeader}>
+                <Text style={styles.fieldLabel}>SERVICES</Text>
                 <Pressable accessibilityRole="button" onPress={() => setStep(0)} hitSlop={8}>
                   <Text style={styles.editLink}>Edit</Text>
                 </Pressable>
               </View>
+              {cart.map((entry) => (
+                <View key={entry.service.id} style={styles.reviewHeader}>
+                  <View style={[styles.reviewIcon, { backgroundColor: entry.service.color }]}>
+                    <Text style={styles.serviceIconText}>{entry.service.icon}</Text>
+                  </View>
+                  <View style={styles.reviewServiceCopy}>
+                    <Text style={styles.reviewMain}>{entry.service.name}</Text>
+                    <Text style={styles.reviewSub}>
+                      {entry.people} {entry.people === 1 ? 'person' : 'people'} ·{' '}
+                      {formatPrice(
+                        calculateLineAmount(entry.service.pricingModel, entry.service.price, entry.people, hours),
+                      )}
+                    </Text>
+                  </View>
+                </View>
+              ))}
 
               <View style={styles.divider} />
               <View style={styles.reviewLine}>
@@ -663,20 +723,12 @@ export default function App() {
                 </View>
               </View>
               <View style={styles.reviewLine}>
-                <Text style={styles.reviewIconLabel}>♙</Text>
-                <View style={styles.reviewLineCopy}>
-                  <Text style={styles.reviewLabel}>TEAM SIZE & DURATION</Text>
-                  <Text style={styles.reviewValue}>{people} {people === 1 ? 'person' : 'people'} · {hours} {hours === 1 ? 'hour' : 'hours'}</Text>
-                </View>
-                <Pressable accessibilityRole="button" onPress={() => setStep(1)} hitSlop={8}>
-                  <Text style={styles.editLink}>Edit</Text>
-                </Pressable>
-              </View>
-              <View style={styles.reviewLine}>
                 <Text style={styles.reviewIconLabel}>◷</Text>
                 <View style={styles.reviewLineCopy}>
                   <Text style={styles.reviewLabel}>DATE & TIME</Text>
-                  <Text style={styles.reviewValue}>{formatDate(date)} · {time}</Text>
+                  <Text style={styles.reviewValue}>
+                    {formatDate(date)} · {time} · {hours} {hours === 1 ? 'hour' : 'hours'}
+                  </Text>
                 </View>
                 <Pressable accessibilityRole="button" onPress={() => setStep(1)} hitSlop={8}>
                   <Text style={styles.editLink}>Edit</Text>
@@ -704,7 +756,7 @@ export default function App() {
                   <Text style={styles.totalTitle}>Estimated total</Text>
                   <Text style={styles.reviewSub}>Taxes or fees may apply</Text>
                 </View>
-                <Text style={styles.estimateAmount}>{formatPrice(total)}</Text>
+                <Text style={styles.estimateAmount}>{formatPrice(cartTotal)}</Text>
               </View>
             </View>
             <View style={styles.paymentNote}>
@@ -722,16 +774,22 @@ export default function App() {
             <Text style={styles.eyebrow}>REQUEST SAVED</Text>
             <Text style={styles.confirmTitle}>Your booking request is saved.</Text>
             <Text style={styles.confirmText}>
-              {lastBookingId ? `Booking reference: ${lastBookingId}. ` : ''}Your {service?.name.toLowerCase()} request is pending for {people} {people === 1 ? 'person' : 'people'} on {formatDate(date)} at {time}.
+              {lastBookingId ? `Booking reference: ${lastBookingId}. ` : ''}Your {cart.length === 1 ? cart[0].service.name.toLowerCase() : `${cart.length}-service`} request is pending on {formatDate(date)} at {time}.
             </Text>
             <View style={styles.confirmCard}>
-              <View style={styles.confirmTop}>
-                <View style={[styles.reviewIcon, { backgroundColor: service?.color ?? '#e9f1e5' }]}><Text style={styles.serviceIconText}>{service?.icon}</Text></View>
-                <View>
-                  <Text style={styles.reviewMain}>{service?.name}</Text>
-                  <Text style={styles.reviewSub}>{people} {people === 1 ? 'person' : 'people'} · {hours} {hours === 1 ? 'hour' : 'hours'}</Text>
+              {cart.map((entry) => (
+                <View key={entry.service.id} style={styles.confirmTop}>
+                  <View style={[styles.reviewIcon, { backgroundColor: entry.service.color }]}>
+                    <Text style={styles.serviceIconText}>{entry.service.icon}</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.reviewMain}>{entry.service.name}</Text>
+                    <Text style={styles.reviewSub}>
+                      {entry.people} {entry.people === 1 ? 'person' : 'people'} · {hours} {hours === 1 ? 'hour' : 'hours'}
+                    </Text>
+                  </View>
                 </View>
-              </View>
+              ))}
               <View style={styles.divider} />
               <Text style={styles.reviewLabel}>WHEN</Text>
               <Text style={styles.reviewValue}>{formatDate(date)} at {time}</Text>
@@ -740,7 +798,7 @@ export default function App() {
               <View style={styles.divider} />
               <View style={styles.totalRow}>
                 <Text style={styles.totalTitle}>Estimated total</Text>
-                <Text style={styles.estimateAmount}>{formatPrice(total)}</Text>
+                <Text style={styles.estimateAmount}>{formatPrice(cartTotal)}</Text>
               </View>
             </View>
             <Pressable
@@ -879,8 +937,9 @@ const styles = StyleSheet.create({
   categoryChipText: { color: '#455747', fontSize: 12, fontWeight: '600' },
   categoryChipTextSelected: { color: '#fff' },
   serviceList: { gap: 10, marginBottom: 14 },
-  serviceCard: { alignItems: 'center', backgroundColor: '#fff', borderColor: '#e6e9e3', borderRadius: 16, borderWidth: 1, flexDirection: 'row', padding: 14 },
+  serviceCard: { backgroundColor: '#fff', borderColor: '#e6e9e3', borderRadius: 16, borderWidth: 1, padding: 14 },
   serviceCardSelected: { borderColor: '#648a68', borderWidth: 1.5, backgroundColor: '#fcfdfb' },
+  serviceCardTouchable: { alignItems: 'center', flexDirection: 'row' },
   serviceIcon: { alignItems: 'center', borderRadius: 13, height: 47, justifyContent: 'center', marginRight: 12, width: 47 },
   serviceIconText: { color: '#3f6849', fontSize: 23, fontWeight: '600' },
   serviceCopy: { flex: 1 },
@@ -888,9 +947,40 @@ const styles = StyleSheet.create({
   serviceDetail: { color: '#808a80', fontSize: 10, marginBottom: 7 },
   servicePrice: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
   priceUnit: { color: '#929a91', fontSize: 9, fontWeight: '400' },
-  radio: { alignItems: 'center', borderColor: '#cbd3ca', borderRadius: 10, borderWidth: 1, height: 19, justifyContent: 'center', marginLeft: 8, width: 19 },
-  radioSelected: { borderColor: '#4f7956' },
-  radioDot: { backgroundColor: '#4f7956', borderRadius: 5, height: 9, width: 9 },
+  checkbox: { alignItems: 'center', borderColor: '#cbd3ca', borderRadius: 6, borderWidth: 1, height: 22, justifyContent: 'center', marginLeft: 8, width: 22 },
+  checkboxSelected: { backgroundColor: '#4f7956', borderColor: '#4f7956' },
+  checkboxMark: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  cartStepperRow: {
+    alignItems: 'center',
+    borderTopColor: '#eff1ed',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingTop: 12,
+  },
+  cartSummaryBar: {
+    alignItems: 'center',
+    backgroundColor: '#244c38',
+    borderRadius: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    minHeight: 50,
+    paddingHorizontal: 15,
+  },
+  cartSummaryText: { color: '#dcebdd', fontSize: 12, fontWeight: '600' },
+  cartSummaryAmount: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  cartLineRow: {
+    alignItems: 'center',
+    borderTopColor: '#eff1ed',
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    minHeight: 59,
+  },
+  cartLineRowFirst: { borderTopWidth: 0 },
+  cartLineCopy: { flex: 1 },
   trustNote: { alignItems: 'center', flexDirection: 'row', marginBottom: 14, paddingHorizontal: 3 },
   trustIcon: { alignItems: 'center', backgroundColor: '#e4ede1', borderRadius: 10, color: '#4f7956', fontSize: 12, fontWeight: '700', height: 20, overflow: 'hidden', paddingTop: 3, textAlign: 'center', width: 20 },
   trustText: { color: '#788378', fontSize: 11, marginLeft: 8 },

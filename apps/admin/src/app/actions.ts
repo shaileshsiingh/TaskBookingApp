@@ -52,7 +52,7 @@ export async function loginAdmin(formData: FormData) {
   }
 
   await createAdminSession(expectedKey);
-  redirect("/");
+  redirect("/bookings");
 }
 
 export async function logoutAdmin() {
@@ -72,11 +72,11 @@ export async function createProvider(formData: FormData) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create provider.";
-    redirect(`/?error=${encodeURIComponent(message)}`);
+    redirect(`/providers?error=${encodeURIComponent(message)}`);
   }
 
-  revalidatePath("/");
-  redirect("/?notice=provider-created");
+  revalidatePath("/providers");
+  redirect("/providers?notice=provider-created");
 }
 
 export async function setProviderVerification(formData: FormData) {
@@ -85,7 +85,7 @@ export async function setProviderVerification(formData: FormData) {
   const providerId = formData.get("providerId");
   const verified = formData.get("verified");
   if (typeof providerId !== "string" || !["true", "false"].includes(String(verified))) {
-    redirect("/?error=invalid-provider-action");
+    redirect("/providers?error=invalid-provider-action");
   }
 
   try {
@@ -96,11 +96,11 @@ export async function setProviderVerification(formData: FormData) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update provider.";
-    redirect(`/?error=${encodeURIComponent(message)}`);
+    redirect(`/providers?error=${encodeURIComponent(message)}`);
   }
 
-  revalidatePath("/");
-  redirect("/?notice=provider-updated");
+  revalidatePath("/providers");
+  redirect("/providers?notice=provider-updated");
 }
 
 export async function assignProvider(formData: FormData) {
@@ -114,7 +114,7 @@ export async function assignProvider(formData: FormData) {
     typeof providerId !== "string" ||
     typeof requirementId !== "string"
   ) {
-    redirect("/?error=invalid-assignment");
+    redirect("/bookings?error=invalid-assignment");
   }
 
   try {
@@ -125,9 +125,116 @@ export async function assignProvider(formData: FormData) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not assign provider.";
-    redirect(`/?error=${encodeURIComponent(message)}`);
+    redirect(`/bookings?error=${encodeURIComponent(message)}`);
   }
 
-  revalidatePath("/");
-  redirect("/?notice=provider-assigned");
+  revalidatePath("/bookings");
+  redirect("/bookings?notice=provider-assigned");
+}
+
+export async function createCategory(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  try {
+    await requestAdminApi("/admin/categories", "POST", {
+      name: formData.get("name"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not create category.";
+    redirect(`/services?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/services");
+  redirect("/services?notice=category-created");
+}
+
+export async function updateCategory(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  const categoryId = formData.get("categoryId");
+  const active = formData.get("active");
+  if (typeof categoryId !== "string" || !["true", "false"].includes(String(active))) {
+    redirect("/services?error=invalid-category-action");
+  }
+
+  try {
+    await requestAdminApi(`/admin/categories/${encodeURIComponent(categoryId)}`, "PATCH", {
+      active: active === "true",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not update category.";
+    redirect(`/services?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/services");
+  redirect("/services?notice=category-updated");
+}
+
+export async function createService(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  try {
+    await requestAdminApi("/admin/services", "POST", {
+      categoryId: formData.get("categoryId"),
+      name: formData.get("name"),
+      description: formData.get("description"),
+      pricingModel: formData.get("pricingModel"),
+      price: formData.get("price"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not create service.";
+    redirect(`/services?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/services");
+  redirect("/services?notice=service-created");
+}
+
+export async function updateService(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  const serviceId = formData.get("serviceId");
+  if (typeof serviceId !== "string") {
+    redirect("/services?error=invalid-service-action");
+  }
+
+  try {
+    await requestAdminApi(`/admin/services/${encodeURIComponent(serviceId)}`, "PATCH", {
+      price: formData.get("price"),
+      pricingModel: formData.get("pricingModel"),
+      active: formData.get("active") === "true",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not update service.";
+    redirect(`/services?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/services");
+  redirect("/services?notice=service-updated");
+}
+
+export async function resolveDispute(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  const orderId = formData.get("orderId");
+  const action = formData.get("action");
+  if (typeof orderId !== "string" || !["refund", "dismiss"].includes(String(action))) {
+    redirect("/disputes?error=invalid-dispute-action");
+  }
+
+  try {
+    await requestAdminApi(`/admin/orders/${encodeURIComponent(orderId)}/dispute-resolution`, "PATCH", {
+      action,
+      refundAmount: formData.get("refundAmount"),
+      note: formData.get("note"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not resolve this dispute.";
+    redirect(`/disputes?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/disputes");
+  redirect(
+    `/disputes?notice=${action === "refund" ? "dispute-refunded" : "dispute-dismissed"}`,
+  );
 }

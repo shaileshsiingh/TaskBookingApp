@@ -93,9 +93,47 @@ describe('AppController', () => {
         },
       ]),
       findFirst: vi.fn().mockResolvedValue({ id: 'home-help', unitPricePaise: 50000 }),
+      create: vi.fn().mockResolvedValue({
+        id: 'service-999',
+        name: 'Deep cleaning',
+        description: null,
+        unitPricePaise: 70000,
+        pricingModel: 'PER_PERSON',
+        active: true,
+        category: { id: 'home-support', name: 'Home support' },
+      }),
+      update: vi.fn().mockResolvedValue({
+        id: 'home-help',
+        name: 'Home help',
+        description: null,
+        unitPricePaise: 60000,
+        pricingModel: 'HOURLY',
+        active: true,
+        category: { id: 'home-support', name: 'Home support' },
+      }),
+    },
+    category: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: 'home-support', name: 'Home support', active: true },
+      ]),
+      findUnique: vi.fn().mockResolvedValue({ id: 'home-support', name: 'Home support', active: true }),
+      create: vi.fn().mockResolvedValue({ id: 'category-999', name: 'Event support', active: true }),
+      update: vi.fn().mockResolvedValue({ id: 'home-support', name: 'Home support', active: true }),
     },
     user: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([
+        {
+          id: 'customer-123',
+          name: 'Karan Reddy',
+          phone: '9876543210',
+          createdAt: new Date('2026-09-01T00:00:00.000Z'),
+          customerOrders: [
+            { status: 'COMPLETED', totalAmountPaise: 400000 },
+            { status: 'CANCELLED', totalAmountPaise: 100000 },
+          ],
+        },
+      ]),
       create: vi.fn().mockResolvedValue({
         id: 'provider-123',
         name: 'Asha Provider',
@@ -122,6 +160,13 @@ describe('AppController', () => {
     },
     order: {
       findMany: vi.fn().mockResolvedValue([createdOrder]),
+      findFirst: vi.fn().mockResolvedValue({ id: 'order-123', status: 'COMPLETED' }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: 'order-123',
+        status: 'DISPUTED',
+        totalAmountPaise: 400000,
+      }),
+      update: vi.fn().mockResolvedValue({ id: 'order-123', status: 'DISPUTED' }),
     },
     $transaction: vi.fn(async (callback: (transaction: typeof transaction) => unknown) =>
       callback(transaction),
@@ -525,6 +570,183 @@ describe('AppController', () => {
       await expect(
         appController.cancelOrder({ headers: {} } as never, 'order-123'),
       ).rejects.toThrow('Only customer accounts can cancel their bookings.');
+    });
+  });
+
+  describe('disputes and refunds', () => {
+    it('lets a customer report an issue on a completed booking', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({ id: 'order-123', status: 'COMPLETED' });
+
+      await expect(
+        appController.raiseDispute({ headers: {} } as never, 'order-123', {
+          reason: 'Provider left early without finishing.',
+        }),
+      ).resolves.toEqual({ id: 'order-123', status: 'disputed' });
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-123' },
+        data: expect.objectContaining({
+          status: 'DISPUTED',
+          disputeReason: 'Provider left early without finishing.',
+        }),
+      });
+    });
+
+    it('rejects a dispute on a booking that is not completed', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({ id: 'order-123', status: 'ACCEPTED' });
+
+      await expect(
+        appController.raiseDispute({ headers: {} } as never, 'order-123', {
+          reason: 'Not happy with it.',
+        }),
+      ).rejects.toThrow('You can report an issue once the booking is marked completed.');
+    });
+
+    it('requires a non-empty reason to raise a dispute', async () => {
+      await expect(
+        appController.raiseDispute({ headers: {} } as never, 'order-123', { reason: '  ' }),
+      ).rejects.toThrow('Describe the issue before submitting.');
+    });
+
+    it('dismisses a dispute back to completed', async () => {
+      prisma.order.update.mockResolvedValueOnce({ id: 'order-123', status: 'COMPLETED' });
+
+      await expect(
+        appController.resolveDispute('order-123', {
+          action: 'dismiss',
+          note: 'Spoke with the provider, resolved informally.',
+        }),
+      ).resolves.toEqual({ id: 'order-123', status: 'completed' });
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-123' },
+        data: { status: 'COMPLETED', resolutionNote: 'Spoke with the provider, resolved informally.' },
+      });
+    });
+
+    it('refunds a dispute within the booking total', async () => {
+      prisma.order.update.mockResolvedValueOnce({ id: 'order-123', status: 'REFUNDED' });
+
+      await expect(
+        appController.resolveDispute('order-123', {
+          action: 'refund',
+          refundAmount: 2000,
+          note: 'Partial refund for incomplete work.',
+        }),
+      ).resolves.toEqual({ id: 'order-123', status: 'refunded' });
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-123' },
+        data: expect.objectContaining({
+          status: 'REFUNDED',
+          refundAmountPaise: 200000,
+        }),
+      });
+    });
+
+    it('rejects a refund larger than the booking total', async () => {
+      await expect(
+        appController.resolveDispute('order-123', { action: 'refund', refundAmount: 999999 }),
+      ).rejects.toThrow('refundAmount cannot exceed the booking total.');
+    });
+
+    it('rejects resolving a dispute on a booking that has none open', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'COMPLETED',
+        totalAmountPaise: 400000,
+      });
+
+      await expect(
+        appController.resolveDispute('order-123', { action: 'dismiss' }),
+      ).rejects.toThrow('This booking has no open dispute to resolve.');
+    });
+  });
+
+  describe('admin catalog and customers', () => {
+    it('lists every category and service for the catalog editor', async () => {
+      await expect(appController.getAdminCatalog()).resolves.toEqual({
+        categories: [{ id: 'home-support', name: 'Home support', active: true }],
+        services: [
+          {
+            id: 'home-help',
+            name: 'Home help',
+            description: 'Cleaning and routine support',
+            categoryId: 'home-support',
+            categoryName: 'Home support',
+            price: 500,
+            pricingModel: 'HOURLY',
+            active: undefined,
+          },
+        ],
+      });
+    });
+
+    it('creates a new service under an existing category', async () => {
+      await expect(
+        appController.createService({
+          categoryId: 'home-support',
+          name: 'Deep cleaning',
+          pricingModel: 'PER_PERSON',
+          price: 700,
+        }),
+      ).resolves.toMatchObject({
+        id: 'service-999',
+        name: 'Deep cleaning',
+        price: 700,
+        pricingModel: 'PER_PERSON',
+      });
+      expect(prisma.service.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            categoryId: 'home-support',
+            name: 'Deep cleaning',
+            pricingModel: 'PER_PERSON',
+            unitPricePaise: 70000,
+          }),
+        }),
+      );
+    });
+
+    it('rejects an unknown pricingModel when creating a service', async () => {
+      await expect(
+        appController.createService({
+          categoryId: 'home-support',
+          name: 'Deep cleaning',
+          pricingModel: 'NOT_A_MODEL',
+          price: 700,
+        }),
+      ).rejects.toThrow('pricingModel must be one of:');
+    });
+
+    it('updates a service price', async () => {
+      await expect(
+        appController.updateService('home-help', { price: 600 }),
+      ).resolves.toMatchObject({ id: 'home-help', price: 600 });
+      expect(prisma.service.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'home-help' },
+          data: { unitPricePaise: 60000 },
+        }),
+      );
+    });
+
+    it('creates a new category', async () => {
+      await expect(appController.createCategory({ name: 'Event support' })).resolves.toEqual({
+        id: 'category-999',
+        name: 'Event support',
+        active: true,
+      });
+    });
+
+    it('lists customers with booking count and lifetime value excluding cancelled orders', async () => {
+      await expect(appController.getCustomers()).resolves.toEqual([
+        {
+          id: 'customer-123',
+          name: 'Karan Reddy',
+          phone: '9876543210',
+          joinedAt: '2026-09-01T00:00:00.000Z',
+          bookingCount: 2,
+          lifetimeValue: 4000,
+        },
+      ]);
     });
   });
 

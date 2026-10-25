@@ -87,6 +87,19 @@ export class AppController {
     return this.appService.cancelOrder(user.id, id);
   }
 
+  @Post('customer/orders/:id/dispute')
+  async raiseDispute(
+    @Req() request: Request,
+    @Param('id') id: string,
+    @Body() input: { reason?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can report an issue.');
+    }
+    return this.appService.raiseDispute(user.id, id, input.reason);
+  }
+
   @Patch('customer/assignments/:id/confirmation')
   async confirmCustomerAssignment(
     @Req() request: Request,
@@ -179,5 +192,53 @@ export class AppController {
     @Body() input: { verified?: unknown },
   ) {
     return this.appService.setProviderVerification(id, input.verified);
+  }
+
+  @Patch('admin/orders/:id/dispute-resolution')
+  @UseGuards(AdminApiKeyGuard)
+  resolveDispute(
+    @Param('id') id: string,
+    @Body() input: { action?: unknown; refundAmount?: unknown; note?: unknown },
+  ) {
+    return this.appService.resolveDispute(id, input.action, input.refundAmount, input.note);
+  }
+
+  @Get('admin/catalog')
+  @UseGuards(AdminApiKeyGuard)
+  getAdminCatalog() {
+    return this.appService.getAdminCatalog();
+  }
+
+  @Post('admin/categories')
+  @UseGuards(AdminApiKeyGuard)
+  createCategory(@Body() input: { name?: unknown }) {
+    return this.appService.createCategory(input.name);
+  }
+
+  @Patch('admin/categories/:id')
+  @UseGuards(AdminApiKeyGuard)
+  updateCategory(
+    @Param('id') id: string,
+    @Body() input: { name?: unknown; active?: unknown },
+  ) {
+    return this.appService.updateCategory(id, input.name, input.active);
+  }
+
+  @Post('admin/services')
+  @UseGuards(AdminApiKeyGuard)
+  createService(@Body() input: Record<string, unknown>) {
+    return this.appService.createService(input);
+  }
+
+  @Patch('admin/services/:id')
+  @UseGuards(AdminApiKeyGuard)
+  updateService(@Param('id') id: string, @Body() input: Record<string, unknown>) {
+    return this.appService.updateService(id, input);
+  }
+
+  @Get('admin/customers')
+  @UseGuards(AdminApiKeyGuard)
+  getCustomers() {
+    return this.appService.getCustomers();
   }
 }

@@ -7,7 +7,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { AssignmentStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
+import { AssignmentStatus, OrderStatus, PricingModel, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from './prisma.service.js';
 import { calculateLineAmountPaise } from './pricing.js';
 import { computeOrderStatus, computeRequirementStatus } from './order-status.js';
@@ -197,6 +197,242 @@ export class AppService {
     }));
   }
 
+  async getAdminCatalog() {
+    const [categories, services] = await Promise.all([
+      this.prisma.category.findMany({ orderBy: { name: 'asc' } }),
+      this.prisma.service.findMany({
+        orderBy: { name: 'asc' },
+        include: { category: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    return {
+      categories: categories.map((category) => ({
+        id: category.id,
+        name: category.name,
+        active: category.active,
+      })),
+      services: services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        description: service.description ?? undefined,
+        categoryId: service.category.id,
+        categoryName: service.category.name,
+        price: service.unitPricePaise / 100,
+        pricingModel: service.pricingModel,
+        active: service.active,
+      })),
+    };
+  }
+
+  async createCategory(nameInput: unknown) {
+    const name = typeof nameInput === 'string' ? nameInput.trim() : '';
+    if (!name) throw new BadRequestException('Category name is required.');
+
+    const category = await this.prisma.category.create({ data: { name } });
+    return { id: category.id, name: category.name, active: category.active };
+  }
+
+  async updateCategory(
+    categoryId: string,
+    nameInput: unknown,
+    activeInput: unknown,
+  ) {
+    const data: { name?: string; active?: boolean } = {};
+    if (nameInput !== undefined) {
+      const name = typeof nameInput === 'string' ? nameInput.trim() : '';
+      if (!name) throw new BadRequestException('Category name cannot be empty.');
+      data.name = name;
+    }
+    if (activeInput !== undefined) {
+      if (typeof activeInput !== 'boolean') {
+        throw new BadRequestException('active must be a boolean.');
+      }
+      data.active = activeInput;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Provide a name and/or active value to update.');
+    }
+
+    try {
+      const category = await this.prisma.category.update({
+        where: { id: categoryId },
+        data,
+      });
+      return { id: category.id, name: category.name, active: category.active };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new NotFoundException(`Category "${categoryId}" was not found.`);
+      }
+      throw error;
+    }
+  }
+
+  async createService(input: {
+    categoryId?: unknown;
+    name?: unknown;
+    description?: unknown;
+    pricingModel?: unknown;
+    price?: unknown;
+  }) {
+    const categoryId = typeof input.categoryId === 'string' ? input.categoryId.trim() : '';
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    const description =
+      typeof input.description === 'string' ? input.description.trim() : '';
+    const pricingModel = this.parsePricingModel(input.pricingModel);
+    const price = Number(input.price);
+
+    if (!categoryId) throw new BadRequestException('categoryId is required.');
+    if (!name) throw new BadRequestException('Service name is required.');
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new BadRequestException('price must be a positive number.');
+    }
+
+    const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
+    if (!category) throw new BadRequestException(`Unknown categoryId: ${categoryId}`);
+
+    const service = await this.prisma.service.create({
+      data: {
+        categoryId,
+        name,
+        description: description || null,
+        pricingModel,
+        unitPricePaise: Math.round(price * 100),
+      },
+      include: { category: { select: { id: true, name: true } } },
+    });
+
+    return {
+      id: service.id,
+      name: service.name,
+      categoryId: service.category.id,
+      categoryName: service.category.name,
+      price: service.unitPricePaise / 100,
+      pricingModel: service.pricingModel,
+      active: service.active,
+    };
+  }
+
+  async updateService(
+    serviceId: string,
+    input: {
+      name?: unknown;
+      description?: unknown;
+      pricingModel?: unknown;
+      price?: unknown;
+      active?: unknown;
+    },
+  ) {
+    const data: {
+      name?: string;
+      description?: string | null;
+      pricingModel?: Prisma.ServiceUpdateInput['pricingModel'];
+      unitPricePaise?: number;
+      active?: boolean;
+    } = {};
+
+    if (input.name !== undefined) {
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      if (!name) throw new BadRequestException('Service name cannot be empty.');
+      data.name = name;
+    }
+    if (input.description !== undefined) {
+      data.description =
+        typeof input.description === 'string' && input.description.trim()
+          ? input.description.trim()
+          : null;
+    }
+    if (input.pricingModel !== undefined) {
+      data.pricingModel = this.parsePricingModel(input.pricingModel);
+    }
+    if (input.price !== undefined) {
+      const price = Number(input.price);
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new BadRequestException('price must be a positive number.');
+      }
+      data.unitPricePaise = Math.round(price * 100);
+    }
+    if (input.active !== undefined) {
+      if (typeof input.active !== 'boolean') {
+        throw new BadRequestException('active must be a boolean.');
+      }
+      data.active = input.active;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Provide at least one field to update.');
+    }
+
+    try {
+      const service = await this.prisma.service.update({
+        where: { id: serviceId },
+        data,
+        include: { category: { select: { id: true, name: true } } },
+      });
+      return {
+        id: service.id,
+        name: service.name,
+        categoryId: service.category.id,
+        categoryName: service.category.name,
+        price: service.unitPricePaise / 100,
+        pricingModel: service.pricingModel,
+        active: service.active,
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new NotFoundException(`Service "${serviceId}" was not found.`);
+      }
+      throw error;
+    }
+  }
+
+  private parsePricingModel(value: unknown): PricingModel {
+    if (
+      typeof value !== 'string' ||
+      !Object.values(PricingModel).includes(value as PricingModel)
+    ) {
+      throw new BadRequestException(
+        `pricingModel must be one of: ${Object.values(PricingModel).join(', ')}.`,
+      );
+    }
+    return value as PricingModel;
+  }
+
+  async getCustomers() {
+    const customers = await this.prisma.user.findMany({
+      where: { role: UserRole.CUSTOMER },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        customerOrders: {
+          select: { status: true, totalAmountPaise: true },
+        },
+      },
+    });
+
+    return customers.map((customer) => {
+      const nonCancelledOrders = customer.customerOrders.filter(
+        (order) => order.status !== OrderStatus.CANCELLED,
+      );
+      return {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        joinedAt: customer.createdAt.toISOString(),
+        bookingCount: customer.customerOrders.length,
+        lifetimeValue:
+          nonCancelledOrders.reduce(
+            (sum, order) => sum + (order.totalAmountPaise ?? 0),
+            0,
+          ) / 100,
+      };
+    });
+  }
+
   async getBookings() {
     const bookings = await this.prisma.order.findMany({
       orderBy: { createdAt: 'desc' },
@@ -230,6 +466,10 @@ export class AppService {
         estimatedTotal: (booking.totalAmountPaise ?? 0) / 100,
         status: statusLabels[booking.status],
         createdAt: booking.createdAt.toISOString(),
+        disputeReason: booking.disputeReason ?? undefined,
+        resolutionNote: booking.resolutionNote ?? undefined,
+        refundAmount:
+          booking.refundAmountPaise != null ? booking.refundAmountPaise / 100 : undefined,
         requirements: booking.requirements.map((requirement) => {
           const assignments = booking.assignments.filter(
             (assignment) => assignment.requirementId === requirement.id,
@@ -287,6 +527,10 @@ export class AppService {
         instructions: booking.instructions ?? undefined,
         estimatedTotal: (booking.totalAmountPaise ?? 0) / 100,
         status: statusLabels[booking.status],
+        disputeReason: booking.disputeReason ?? undefined,
+        resolutionNote: booking.resolutionNote ?? undefined,
+        refundAmount:
+          booking.refundAmountPaise != null ? booking.refundAmountPaise / 100 : undefined,
         requirements: booking.requirements.map((requirement) => {
           const assignments = booking.assignments.filter(
             (assignment) => assignment.requirementId === requirement.id,
@@ -378,6 +622,88 @@ export class AppService {
       },
       { isolationLevel: 'Serializable' },
     );
+  }
+
+  async raiseDispute(customerId: string, orderId: string, reasonInput: unknown) {
+    const reason = typeof reasonInput === 'string' ? reasonInput.trim() : '';
+    if (!reason) throw new BadRequestException('Describe the issue before submitting.');
+    if (reason.length > 500) {
+      throw new BadRequestException('reason must be 500 characters or fewer.');
+    }
+
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      select: { id: true, status: true },
+    });
+    if (!order) throw new NotFoundException('Booking was not found.');
+    if (order.status !== OrderStatus.COMPLETED) {
+      throw new BadRequestException(
+        'You can report an issue once the booking is marked completed.',
+      );
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: OrderStatus.DISPUTED,
+        disputeReason: reason,
+        disputedAt: new Date(),
+      },
+    });
+
+    return { id: updated.id, status: statusLabels[updated.status] };
+  }
+
+  async resolveDispute(
+    orderId: string,
+    actionInput: unknown,
+    refundAmountInput: unknown,
+    noteInput: unknown,
+  ) {
+    if (actionInput !== 'refund' && actionInput !== 'dismiss') {
+      throw new BadRequestException('action must be "refund" or "dismiss".');
+    }
+    const note = typeof noteInput === 'string' ? noteInput.trim() : '';
+    if (note.length > 500) {
+      throw new BadRequestException('note must be 500 characters or fewer.');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, totalAmountPaise: true },
+    });
+    if (!order) throw new NotFoundException(`Booking "${orderId}" was not found.`);
+    if (order.status !== OrderStatus.DISPUTED) {
+      throw new BadRequestException('This booking has no open dispute to resolve.');
+    }
+
+    if (actionInput === 'dismiss') {
+      const updated = await this.prisma.order.update({
+        where: { id: order.id },
+        data: { status: OrderStatus.COMPLETED, resolutionNote: note || null },
+      });
+      return { id: updated.id, status: statusLabels[updated.status] };
+    }
+
+    const refundRupees = Number(refundAmountInput);
+    if (!Number.isFinite(refundRupees) || refundRupees <= 0) {
+      throw new BadRequestException('refundAmount must be a positive number.');
+    }
+    const refundAmountPaise = Math.round(refundRupees * 100);
+    if (refundAmountPaise > (order.totalAmountPaise ?? 0)) {
+      throw new BadRequestException('refundAmount cannot exceed the booking total.');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: OrderStatus.REFUNDED,
+        refundedAt: new Date(),
+        refundAmountPaise,
+        resolutionNote: note || null,
+      },
+    });
+    return { id: updated.id, status: statusLabels[updated.status] };
   }
 
   async confirmCustomerAssignment(customerId: string, assignmentId: string) {

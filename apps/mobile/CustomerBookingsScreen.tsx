@@ -44,6 +44,9 @@ type CustomerBooking = {
   instructions?: string;
   estimatedTotal: number;
   status: string;
+  disputeReason?: string;
+  resolutionNote?: string;
+  refundAmount?: number;
   requirements: CustomerRequirement[];
 };
 
@@ -104,6 +107,9 @@ export default function CustomerBookingsScreen({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [reportingId, setReportingId] = useState<string | null>(null);
+  const [disputeReasons, setDisputeReasons] = useState<Record<string, string>>({});
+  const [submittingDisputeId, setSubmittingDisputeId] = useState<string | null>(null);
   const [error, setError] = useState(authError);
 
   const loadBookings = useCallback(async (refresh = false) => {
@@ -206,6 +212,40 @@ export default function CustomerBookingsScreen({
       );
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const submitDispute = async (bookingId: string) => {
+    const reason = (disputeReasons[bookingId] ?? '').trim();
+    if (!reason) {
+      setError('Describe the issue before submitting.');
+      return;
+    }
+    setSubmittingDisputeId(bookingId);
+    setError('');
+    try {
+      await authenticatedFetch(
+        `${apiBaseUrl}/customer/orders/${encodeURIComponent(bookingId)}/dispute`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        },
+      );
+      setReportingId(null);
+      setDisputeReasons((current) => {
+        const { [bookingId]: _removed, ...rest } = current;
+        return rest;
+      });
+      await loadBookings(true);
+    } catch (disputeError) {
+      setError(
+        disputeError instanceof Error
+          ? disputeError.message
+          : 'Could not submit your report. Please try again.',
+      );
+    } finally {
+      setSubmittingDisputeId(null);
     }
   };
 
@@ -446,6 +486,73 @@ export default function CustomerBookingsScreen({
                   </Text>
                 </Pressable>
               ) : null}
+
+              {booking.status === 'disputed' && booking.disputeReason ? (
+                <View style={styles.disputeBox}>
+                  <Text style={styles.disputeLabel}>ISSUE REPORTED</Text>
+                  <Text style={styles.disputeText}>{booking.disputeReason}</Text>
+                  <Text style={styles.disputeStatus}>Our team is reviewing this.</Text>
+                </View>
+              ) : null}
+
+              {booking.status === 'refunded' ? (
+                <View style={styles.disputeBox}>
+                  <Text style={styles.disputeLabel}>REFUNDED</Text>
+                  {booking.refundAmount ? (
+                    <Text style={styles.disputeText}>
+                      ₹{booking.refundAmount.toLocaleString('en-IN')} was refunded.
+                    </Text>
+                  ) : null}
+                  {booking.resolutionNote ? (
+                    <Text style={styles.disputeStatus}>{booking.resolutionNote}</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {booking.status === 'completed' ? (
+                reportingId === booking.id ? (
+                  <View style={styles.disputeForm}>
+                    <TextInput
+                      accessibilityLabel="Describe the issue"
+                      maxLength={500}
+                      multiline
+                      onChangeText={(value) =>
+                        setDisputeReasons((current) => ({ ...current, [booking.id]: value }))
+                      }
+                      placeholder="What went wrong?"
+                      placeholderTextColor="#9aa39a"
+                      style={styles.disputeInput}
+                      value={disputeReasons[booking.id] ?? ''}
+                    />
+                    <View style={styles.disputeFormActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setReportingId(null)}
+                        style={styles.disputeCancelButton}
+                      >
+                        <Text style={styles.disputeCancelText}>Never mind</Text>
+                      </Pressable>
+                      <ActionButton
+                        disabled={submittingDisputeId === booking.id}
+                        label={
+                          submittingDisputeId === booking.id
+                            ? 'Submitting…'
+                            : 'Submit report'
+                        }
+                        onPress={() => void submitDispute(booking.id)}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setReportingId(booking.id)}
+                    style={styles.reportButton}
+                  >
+                    <Text style={styles.reportText}>Report an issue</Text>
+                  </Pressable>
+                )
+              ) : null}
             </View>
           ))
         )}
@@ -604,6 +711,46 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cancelText: { color: '#a44338', fontSize: 12, fontWeight: '700' },
+  reportButton: {
+    alignItems: 'center',
+    marginTop: 10,
+    paddingVertical: 10,
+  },
+  reportText: { color: '#6c796e', fontSize: 11, fontWeight: '700', textDecorationLine: 'underline' },
+  disputeForm: {
+    backgroundColor: '#f7f8f5',
+    borderRadius: 11,
+    marginTop: 12,
+    padding: 12,
+  },
+  disputeInput: {
+    backgroundColor: '#fff',
+    borderColor: '#e7eae4',
+    borderRadius: 9,
+    borderWidth: 1,
+    color: '#293a2d',
+    fontSize: 11,
+    minHeight: 70,
+    padding: 10,
+    textAlignVertical: 'top',
+  },
+  disputeFormActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  disputeCancelButton: { paddingHorizontal: 4, paddingVertical: 12 },
+  disputeCancelText: { color: '#6c796e', fontSize: 11, fontWeight: '700' },
+  disputeBox: {
+    backgroundColor: '#fff7ea',
+    borderRadius: 10,
+    marginTop: 12,
+    padding: 12,
+  },
+  disputeLabel: { color: '#8a6113', fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },
+  disputeText: { color: '#5c4a26', fontSize: 11, lineHeight: 17, marginTop: 5 },
+  disputeStatus: { color: '#8a7b57', fontSize: 10, marginTop: 5 },
   reviewBox: {
     backgroundColor: '#f7f8f5',
     borderRadius: 11,
