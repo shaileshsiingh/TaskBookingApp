@@ -13,6 +13,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
+import { connectRealtime } from './lib/realtime';
 
 type AssignmentStatus =
   | 'offered'
@@ -136,6 +137,24 @@ export default function ProviderJobsScreen({
   useEffect(() => {
     void loadJobs();
     void loadEarnings();
+  }, [loadJobs, loadEarnings]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let disconnect: (() => void) | undefined;
+
+    void connectRealtime(() => {
+      void loadJobs(true);
+      void loadEarnings();
+    }).then((cleanup) => {
+      if (isMounted) disconnect = cleanup;
+      else cleanup();
+    });
+
+    return () => {
+      isMounted = false;
+      disconnect?.();
+    };
   }, [loadJobs, loadEarnings]);
 
   const toggleAvailability = async (value: boolean) => {

@@ -12,6 +12,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
+import { connectRealtime } from './lib/realtime';
 
 type ProviderReview = {
   rating: number;
@@ -136,6 +137,21 @@ export default function CustomerBookingsScreen({
 
   useEffect(() => {
     void loadBookings();
+  }, [loadBookings]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let disconnect: (() => void) | undefined;
+
+    void connectRealtime(() => void loadBookings(true)).then((cleanup) => {
+      if (isMounted) disconnect = cleanup;
+      else cleanup();
+    });
+
+    return () => {
+      isMounted = false;
+      disconnect?.();
+    };
   }, [loadBookings]);
 
   const updateAssignment = async (

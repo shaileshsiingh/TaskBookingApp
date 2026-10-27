@@ -66,6 +66,18 @@ model User {
   providerAssignments Assignment[]     @relation("ProviderAssignments")
   reviewsGiven        ProviderReview[] @relation("CustomerReviews")
   reviewsReceived     ProviderReview[] @relation("ProviderReviews")
+  addresses           Address[]        @relation("CustomerAddresses")
+}
+
+model Address {
+  id         String   @id @default(cuid())
+  customerId String
+  label      String?
+  line       String
+  createdAt  DateTime @default(now())
+  customer   User     @relation("CustomerAddresses", fields: [customerId], references: [id])
+
+  @@index([customerId])
 }
 
 model AuthUser {

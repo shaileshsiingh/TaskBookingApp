@@ -27,13 +27,17 @@
     "@better-auth/prisma-adapter": "^1.7.7",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
-    "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/platform-express": "^12.2.0",
+    "@nestjs/platform-socket.io": "^12.2.0",
+    "@nestjs/schedule": "^12.0.2",
+    "@nestjs/websockets": "^12.2.0",
     "@prisma/client": "^6.19.3",
     "better-auth": "^1.7.7",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.4"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",

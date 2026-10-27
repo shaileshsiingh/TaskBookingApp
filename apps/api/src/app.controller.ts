@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -98,6 +99,36 @@ export class AppController {
       throw new ForbiddenException('Only customer accounts can report an issue.');
     }
     return this.appService.raiseDispute(user.id, id, input.reason);
+  }
+
+  @Get('customer/addresses')
+  async getCustomerAddresses(@Req() request: Request) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can manage saved addresses.');
+    }
+    return this.appService.getCustomerAddresses(user.id);
+  }
+
+  @Post('customer/addresses')
+  async createCustomerAddress(
+    @Req() request: Request,
+    @Body() input: { line?: unknown; label?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can manage saved addresses.');
+    }
+    return this.appService.createCustomerAddress(user.id, input.line, input.label);
+  }
+
+  @Delete('customer/addresses/:id')
+  async deleteCustomerAddress(@Req() request: Request, @Param('id') id: string) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can manage saved addresses.');
+    }
+    return this.appService.deleteCustomerAddress(user.id, id);
   }
 
   @Patch('customer/assignments/:id/confirmation')

@@ -3,6 +3,7 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthService } from './auth.service.js';
 import { PrismaService } from './prisma.service.js';
+import { RealtimeGateway } from './realtime.gateway.js';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -14,6 +15,9 @@ describe('AppController', () => {
       name: 'Karan Reddy',
       phone: '9876543210',
     }),
+  };
+  const realtimeGateway = {
+    notifyUsers: vi.fn(),
   };
 
   const createdOrder = {
@@ -165,8 +169,19 @@ describe('AppController', () => {
         id: 'order-123',
         status: 'DISPUTED',
         totalAmountPaise: 400000,
+        customerId: 'customer-123',
       }),
       update: vi.fn().mockResolvedValue({ id: 'order-123', status: 'DISPUTED' }),
+    },
+    address: {
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+      create: vi.fn().mockResolvedValue({
+        id: 'address-123',
+        label: null,
+        line: '12, Green Park, Kondapur',
+      }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     $transaction: vi.fn(async (callback: (transaction: typeof transaction) => unknown) =>
       callback(transaction),
@@ -181,6 +196,7 @@ describe('AppController', () => {
         AppService,
         { provide: AuthService, useValue: authService },
         { provide: PrismaService, useValue: prisma },
+        { provide: RealtimeGateway, useValue: realtimeGateway },
       ],
     }).compile();
 
@@ -660,6 +676,78 @@ describe('AppController', () => {
     });
   });
 
+  describe('saved addresses', () => {
+    it('lists the signed-in customer\'s saved addresses', async () => {
+      prisma.address.findMany.mockResolvedValueOnce([
+        { id: 'address-123', label: 'Home', line: '12, Green Park, Kondapur' },
+      ]);
+
+      await expect(
+        appController.getCustomerAddresses({ headers: {} } as never),
+      ).resolves.toEqual([
+        { id: 'address-123', label: 'Home', line: '12, Green Park, Kondapur' },
+      ]);
+    });
+
+    it('saves a new address for the signed-in customer', async () => {
+      await expect(
+        appController.createCustomerAddress({ headers: {} } as never, {
+          line: '12, Green Park, Kondapur',
+          label: 'Home',
+        }),
+      ).resolves.toMatchObject({ id: 'address-123', line: '12, Green Park, Kondapur' });
+      expect(prisma.address.create).toHaveBeenCalledWith({
+        data: { customerId: 'customer-123', line: '12, Green Park, Kondapur', label: 'Home' },
+      });
+    });
+
+    it('rejects an empty address', async () => {
+      await expect(
+        appController.createCustomerAddress({ headers: {} } as never, { line: '   ' }),
+      ).rejects.toThrow('address is required.');
+    });
+
+    it('blocks saving past the address limit', async () => {
+      prisma.address.count.mockResolvedValueOnce(10);
+
+      await expect(
+        appController.createCustomerAddress({ headers: {} } as never, {
+          line: '12, Green Park, Kondapur',
+        }),
+      ).rejects.toThrow('You can save up to 10 addresses. Delete one before adding another.');
+    });
+
+    it('deletes a saved address scoped to the signed-in customer', async () => {
+      await expect(
+        appController.deleteCustomerAddress({ headers: {} } as never, 'address-123'),
+      ).resolves.toEqual({ id: 'address-123' });
+      expect(prisma.address.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'address-123', customerId: 'customer-123' },
+      });
+    });
+
+    it('404s when deleting an address that does not belong to the customer', async () => {
+      prisma.address.deleteMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        appController.deleteCustomerAddress({ headers: {} } as never, 'address-999'),
+      ).rejects.toThrow('Saved address was not found.');
+    });
+
+    it('does not allow a provider account to manage addresses', async () => {
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      await expect(
+        appController.getCustomerAddresses({ headers: {} } as never),
+      ).rejects.toThrow('Only customer accounts can manage saved addresses.');
+    });
+  });
+
   describe('admin catalog and customers', () => {
     it('lists every category and service for the catalog editor', async () => {
       await expect(appController.getAdminCatalog()).resolves.toEqual({
@@ -1056,6 +1144,51 @@ describe('AppController', () => {
       await expect(
         appController.setProviderVerification('provider-123', { verified: true }),
       ).rejects.toThrow('Provider must have a service area and at least one service before verification.');
+    });
+  });
+
+  describe('scheduled reassignment retry', () => {
+    it('fills an under-covered requirement on a stuck order and notifies the result', async () => {
+      prisma.order.findMany.mockResolvedValueOnce([
+        {
+          id: 'order-456',
+          requirements: [{ id: 'requirement-456', serviceId: 'home-help', quantity: 1 }],
+        },
+      ]);
+      prisma.assignment.findMany.mockResolvedValueOnce([]);
+      transaction.order.findUnique.mockResolvedValueOnce({ status: 'REASSIGNMENT_REQUIRED' });
+      transaction.assignment.findMany.mockResolvedValueOnce([]);
+      transaction.providerProfile.findMany.mockResolvedValueOnce([{ userId: 'provider-789' }]);
+      transaction.assignment.groupBy.mockResolvedValueOnce([]);
+      transaction.order.findUniqueOrThrow.mockResolvedValueOnce({
+        customerId: 'customer-456',
+        requirements: [{ id: 'requirement-456', quantity: 1 }],
+        assignments: [{ requirementId: 'requirement-456', status: 'OFFERED' }],
+      });
+
+      await appService.retryStuckReassignments();
+
+      expect(transaction.assignment.create).toHaveBeenCalledWith({
+        data: { orderId: 'order-456', requirementId: 'requirement-456', providerId: 'provider-789' },
+      });
+      expect(realtimeGateway.notifyUsers).toHaveBeenCalledWith(['customer-456', 'provider-789']);
+    });
+
+    it('skips a requirement that already has enough active coverage', async () => {
+      prisma.order.findMany.mockResolvedValueOnce([
+        {
+          id: 'order-456',
+          requirements: [{ id: 'requirement-456', serviceId: 'home-help', quantity: 1 }],
+        },
+      ]);
+      prisma.assignment.findMany.mockResolvedValueOnce([
+        { requirementId: 'requirement-456', providerId: 'provider-789', status: 'OFFERED' },
+      ]);
+
+      await appService.retryStuckReassignments();
+
+      expect(transaction.assignment.create).not.toHaveBeenCalled();
+      expect(realtimeGateway.notifyUsers).not.toHaveBeenCalled();
     });
   });
 });

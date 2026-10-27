@@ -11,6 +11,7 @@ import { AssignmentStatus, OrderStatus, PricingModel, Prisma, UserRole } from '@
 import { PrismaService } from './prisma.service.js';
 import { calculateLineAmountPaise } from './pricing.js';
 import { computeOrderStatus, computeRequirementStatus } from './order-status.js';
+import { RealtimeGateway } from './realtime.gateway.js';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -50,6 +51,7 @@ const terminalOrderStatuses = [
 
 const CANCELLATION_FEE_WINDOW_MINUTES = 120;
 const CANCELLATION_FEE_RATE = 0.1;
+const MAX_SAVED_ADDRESSES = 10;
 
 function generateStartOtp(): string {
   return String(Math.floor(1000 + Math.random() * 9000));
@@ -154,7 +156,10 @@ function formatIndiaDateTime(value: Date) {
 export class AppService {
   private readonly logger = new Logger(AppService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeGateway,
+  ) {}
 
   async getHealth(): Promise<{ status: string; database: string }> {
     try {
@@ -564,11 +569,18 @@ export class AppService {
   }
 
   async cancelOrder(customerId: string, orderId: string) {
-    return this.prisma.$transaction(
+    const activeAssignmentStatusesForCancellation: AssignmentStatus[] = [
+      AssignmentStatus.OFFERED,
+      AssignmentStatus.ACCEPTED,
+      AssignmentStatus.ON_THE_WAY,
+      AssignmentStatus.ARRIVED,
+    ];
+
+    const result = await this.prisma.$transaction(
       async (transaction) => {
         const order = await transaction.order.findFirst({
           where: { id: orderId, customerId },
-          include: { assignments: { select: { status: true } } },
+          include: { assignments: { select: { status: true, providerId: true } } },
         });
         if (!order) throw new NotFoundException('Booking was not found.');
         if ((terminalOrderStatuses as readonly OrderStatus[]).includes(order.status)) {
@@ -602,26 +614,30 @@ export class AppService {
         await transaction.assignment.updateMany({
           where: {
             orderId: order.id,
-            status: {
-              in: [
-                AssignmentStatus.OFFERED,
-                AssignmentStatus.ACCEPTED,
-                AssignmentStatus.ON_THE_WAY,
-                AssignmentStatus.ARRIVED,
-              ],
-            },
+            status: { in: activeAssignmentStatusesForCancellation },
           },
           data: { status: AssignmentStatus.CANCELLED },
         });
+
+        const affectedProviderIds = order.assignments
+          .filter((assignment) =>
+            activeAssignmentStatusesForCancellation.includes(assignment.status),
+          )
+          .map((assignment) => assignment.providerId);
 
         return {
           id: order.id,
           status: statusLabels[OrderStatus.CANCELLED],
           cancellationFee: cancellationFeePaise / 100,
+          affectedProviderIds,
         };
       },
       { isolationLevel: 'Serializable' },
     );
+
+    this.realtime.notifyUsers([customerId, ...result.affectedProviderIds]);
+    const { affectedProviderIds: _affectedProviderIds, ...response } = result;
+    return response;
   }
 
   async raiseDispute(customerId: string, orderId: string, reasonInput: unknown) {
@@ -651,6 +667,7 @@ export class AppService {
       },
     });
 
+    this.realtime.notifyUsers([customerId]);
     return { id: updated.id, status: statusLabels[updated.status] };
   }
 
@@ -670,7 +687,7 @@ export class AppService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, status: true, totalAmountPaise: true },
+      select: { id: true, status: true, totalAmountPaise: true, customerId: true },
     });
     if (!order) throw new NotFoundException(`Booking "${orderId}" was not found.`);
     if (order.status !== OrderStatus.DISPUTED) {
@@ -682,6 +699,7 @@ export class AppService {
         where: { id: order.id },
         data: { status: OrderStatus.COMPLETED, resolutionNote: note || null },
       });
+      this.realtime.notifyUsers([order.customerId]);
       return { id: updated.id, status: statusLabels[updated.status] };
     }
 
@@ -703,7 +721,54 @@ export class AppService {
         resolutionNote: note || null,
       },
     });
+    this.realtime.notifyUsers([order.customerId]);
     return { id: updated.id, status: statusLabels[updated.status] };
+  }
+
+  async getCustomerAddresses(customerId: string) {
+    const addresses = await this.prisma.address.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return addresses.map((address) => ({
+      id: address.id,
+      label: address.label ?? undefined,
+      line: address.line,
+    }));
+  }
+
+  async createCustomerAddress(customerId: string, lineInput: unknown, labelInput: unknown) {
+    const line = typeof lineInput === 'string' ? lineInput.trim() : '';
+    if (!line) throw new BadRequestException('address is required.');
+    if (line.length > 240) {
+      throw new BadRequestException('address must be 240 characters or fewer.');
+    }
+    const label = typeof labelInput === 'string' ? labelInput.trim() : '';
+    if (label.length > 40) {
+      throw new BadRequestException('label must be 40 characters or fewer.');
+    }
+
+    const existingCount = await this.prisma.address.count({ where: { customerId } });
+    if (existingCount >= MAX_SAVED_ADDRESSES) {
+      throw new BadRequestException(
+        `You can save up to ${MAX_SAVED_ADDRESSES} addresses. Delete one before adding another.`,
+      );
+    }
+
+    const address = await this.prisma.address.create({
+      data: { customerId, line, label: label || null },
+    });
+    return { id: address.id, label: address.label ?? undefined, line: address.line };
+  }
+
+  async deleteCustomerAddress(customerId: string, addressId: string) {
+    const deleted = await this.prisma.address.deleteMany({
+      where: { id: addressId, customerId },
+    });
+    if (deleted.count === 0) {
+      throw new NotFoundException('Saved address was not found.');
+    }
+    return { id: addressId };
   }
 
   async confirmCustomerAssignment(customerId: string, assignmentId: string) {
@@ -1090,11 +1155,14 @@ export class AppService {
           orderId: assignment.orderId,
           requirementId: assignment.requirementId,
           serviceId: requirement.serviceId,
+          customerId: assignment.order.customerId,
           requiresReassignment,
         };
       },
       { isolationLevel: 'Serializable' },
     );
+
+    this.realtime.notifyUsers([result.customerId, providerId]);
 
     if (result.requiresReassignment) {
       await this.attemptAutomaticReassignment(
@@ -1206,7 +1274,7 @@ export class AppService {
       throw new BadRequestException('requirementId is required.');
     }
 
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (transaction) => {
         const order = await transaction.order.findUnique({
           where: { id: orderId },
@@ -1295,10 +1363,15 @@ export class AppService {
           providerId: provider.userId,
           providerName: assignment.provider.name,
           status: assignment.status.toLowerCase(),
+          customerId: order.customerId,
         };
       },
       { isolationLevel: 'Serializable' },
     );
+
+    this.realtime.notifyUsers([result.customerId, result.providerId]);
+    const { customerId: _customerId, ...response } = result;
+    return response;
   }
 
   private async findEligibleProvider(
@@ -1347,28 +1420,28 @@ export class AppService {
       )[0].userId;
   }
 
-  private async attemptAutomaticReassignment(
+  private async createReplacementAssignment(
     orderId: string,
     requirementId: string,
     serviceId: string,
-    departedProviderId: string,
-  ): Promise<void> {
-    await withSerializableRetry(() =>
+    excludeProviderIds: string[],
+  ): Promise<{ customerId: string; replacementProviderId: string } | null> {
+    const outcome = await withSerializableRetry(() =>
       this.prisma.$transaction(
         async (transaction) => {
           const order = await transaction.order.findUnique({
             where: { id: orderId },
             select: { status: true },
           });
-          if (!order || order.status !== OrderStatus.REASSIGNMENT_REQUIRED) return;
+          if (!order || order.status !== OrderStatus.REASSIGNMENT_REQUIRED) return null;
 
           const replacementProviderId = await this.findEligibleProvider(
             transaction,
             requirementId,
             serviceId,
-            [departedProviderId],
+            excludeProviderIds,
           );
-          if (!replacementProviderId) return;
+          if (!replacementProviderId) return null;
 
           await transaction.assignment.create({
             data: { orderId, requirementId, providerId: replacementProviderId },
@@ -1393,10 +1466,69 @@ export class AppService {
             where: { id: orderId },
             data: { status: nextOrderStatus },
           });
+
+          return { customerId: fullOrder.customerId, replacementProviderId };
         },
         { isolationLevel: 'Serializable' },
       ),
     );
+
+    return outcome ?? null;
+  }
+
+  private async attemptAutomaticReassignment(
+    orderId: string,
+    requirementId: string,
+    serviceId: string,
+    departedProviderId: string,
+  ): Promise<void> {
+    const outcome = await this.createReplacementAssignment(
+      orderId,
+      requirementId,
+      serviceId,
+      [departedProviderId],
+    );
+    if (outcome) {
+      this.realtime.notifyUsers([outcome.customerId, outcome.replacementProviderId]);
+    }
+  }
+
+  async retryStuckReassignments(): Promise<void> {
+    const stuckOrders = await this.prisma.order.findMany({
+      where: { status: OrderStatus.REASSIGNMENT_REQUIRED },
+      select: {
+        id: true,
+        requirements: { select: { id: true, serviceId: true, quantity: true } },
+      },
+    });
+
+    for (const order of stuckOrders) {
+      const assignments = await this.prisma.assignment.findMany({
+        where: { orderId: order.id },
+        select: { requirementId: true, providerId: true, status: true },
+      });
+
+      for (const requirement of order.requirements) {
+        const requirementAssignments = assignments.filter(
+          (assignment) => assignment.requirementId === requirement.id,
+        );
+        const activeCount = requirementAssignments.filter((assignment) =>
+          (activeAssignmentStatuses as readonly AssignmentStatus[]).includes(assignment.status),
+        ).length;
+        if (activeCount >= requirement.quantity) continue;
+
+        const excludeProviderIds = requirementAssignments.map((assignment) => assignment.providerId);
+        const outcome = await this.createReplacementAssignment(
+          order.id,
+          requirement.id,
+          requirement.serviceId,
+          excludeProviderIds,
+        );
+        if (outcome) {
+          this.realtime.notifyUsers([outcome.customerId, outcome.replacementProviderId]);
+        }
+      }
+    }
   }
 
   async getBookingById(id: string) {

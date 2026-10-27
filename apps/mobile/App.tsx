@@ -40,6 +40,12 @@ type CartItem = {
   people: number;
 };
 
+type SavedAddress = {
+  id: string;
+  label?: string;
+  line: string;
+};
+
 type BookingResponse = {
   id: string;
 };
@@ -68,6 +74,18 @@ async function syncCurrentUser(input?: Partial<AuthProfileInput>) {
       ...(input ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(input ? { body: JSON.stringify(input) } : {}),
+  });
+}
+
+async function authenticatedFetch<T>(url: string, init?: RequestInit) {
+  const cookie = await authClient.getCookie();
+  if (!cookie) throw new Error('Your sign-in session expired. Sign in again.');
+  return fetchJson<T>(url, {
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      cookie,
+    },
   });
 }
 
@@ -110,6 +128,8 @@ export default function App() {
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [address, setAddress] = useState('');
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [isSavingAddress, setIsSavingAddress] = useState(false);
   const [instructions, setInstructions] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -208,6 +228,55 @@ export default function App() {
     });
     return () => subscription.remove();
   }, [step]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'CUSTOMER') {
+      setSavedAddresses([]);
+      return;
+    }
+    let isMounted = true;
+    authenticatedFetch<SavedAddress[]>(`${apiBaseUrl}/customer/addresses`)
+      .then((result) => {
+        if (isMounted) setSavedAddresses(result);
+      })
+      .catch(() => {
+        // Saved addresses are a convenience; a failed fetch just leaves the list empty.
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.role, currentUser?.id]);
+
+  const saveCurrentAddress = async () => {
+    const line = address.trim();
+    if (!line) return;
+    setIsSavingAddress(true);
+    try {
+      const saved = await authenticatedFetch<SavedAddress>(`${apiBaseUrl}/customer/addresses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line }),
+      });
+      setSavedAddresses((current) => [saved, ...current]);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : 'Could not save this address.',
+      );
+    } finally {
+      setIsSavingAddress(false);
+    }
+  };
+
+  const deleteSavedAddress = async (addressId: string) => {
+    try {
+      await authenticatedFetch(`${apiBaseUrl}/customer/addresses/${encodeURIComponent(addressId)}`, {
+        method: 'DELETE',
+      });
+      setSavedAddresses((current) => current.filter((item) => item.id !== addressId));
+    } catch {
+      // Non-critical: the chip just stays if the delete request fails.
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -645,6 +714,34 @@ export default function App() {
 
             <View style={styles.sectionCard}>
               <Text style={styles.fieldLabel}>SERVICE ADDRESS</Text>
+              {savedAddresses.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.addressChipList}
+                >
+                  {savedAddresses.map((saved) => (
+                    <View key={saved.id} style={styles.addressChip}>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => { setAddress(saved.line); setError(''); }}
+                      >
+                        <Text numberOfLines={1} style={styles.addressChipText}>
+                          {saved.label || saved.line}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityLabel={`Remove saved address ${saved.label || saved.line}`}
+                        accessibilityRole="button"
+                        hitSlop={8}
+                        onPress={() => void deleteSavedAddress(saved.id)}
+                      >
+                        <Text style={styles.addressChipRemove}>×</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </ScrollView>
+              ) : null}
               <TextInput
                 accessibilityLabel="Service address"
                 autoCapitalize="words"
@@ -655,6 +752,19 @@ export default function App() {
                 style={styles.input}
                 value={address}
               />
+              {address.trim() &&
+              !savedAddresses.some((saved) => saved.line === address.trim()) ? (
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSavingAddress}
+                  onPress={() => void saveCurrentAddress()}
+                  style={styles.saveAddressLink}
+                >
+                  <Text style={styles.saveAddressText}>
+                    {isSavingAddress ? 'Saving…' : 'Save this address for next time'}
+                  </Text>
+                </Pressable>
+              ) : null}
               <Text style={[styles.fieldLabel, styles.instructionLabel]}>NOTES FOR YOUR TEAM <Text style={styles.optional}>(OPTIONAL)</Text></Text>
               <TextInput
                 accessibilityLabel="Notes for your team"
@@ -1019,6 +1129,21 @@ const styles = StyleSheet.create({
   timeTextSelected: { color: '#416b4c' },
   input: { backgroundColor: '#fafbf9', borderColor: '#e7eae4', borderRadius: 10, borderWidth: 1, color: '#293a2d', fontSize: 12, minHeight: 45, paddingHorizontal: 12 },
   phoneInput: { marginTop: 9 },
+  addressChipList: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingBottom: 9 },
+  addressChip: {
+    alignItems: 'center',
+    backgroundColor: '#edf3ea',
+    borderRadius: 10,
+    flexDirection: 'row',
+    gap: 7,
+    maxWidth: 170,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  addressChipText: { color: '#355b3f', fontSize: 11, fontWeight: '600', maxWidth: 130 },
+  addressChipRemove: { color: '#6c9470', fontSize: 14, fontWeight: '700' },
+  saveAddressLink: { alignSelf: 'flex-start', marginTop: 9, paddingVertical: 4 },
+  saveAddressText: { color: '#4a7653', fontSize: 11, fontWeight: '700' },
   instructionLabel: { marginTop: 17 },
   optional: { color: '#adb3ab', fontSize: 8, fontWeight: '500' },
   multilineInput: { minHeight: 67, paddingTop: 12, textAlignVertical: 'top' },
