@@ -1,5 +1,6 @@
 import { createCategory, createService, logoutAdmin, updateCategory, updateService } from "../../actions";
 import { fetchApi } from "../../admin-api";
+import SubmitButton from "../../SubmitButton";
 import type { AdminCatalog } from "../../types";
 import styles from "../../page.module.css";
 
@@ -53,7 +54,7 @@ export default async function ServicesPage({
         </div>
         <div className={styles.headerActions}>
           <span className={styles.status}><span className={styles.statusDot} />Live data</span>
-          <form action={logoutAdmin}><button className={styles.actionButton} type="submit">Sign out</button></form>
+          <form action={logoutAdmin}><SubmitButton className={styles.actionButton} pendingLabel="Signing out…">Sign out</SubmitButton></form>
         </div>
       </header>
 
@@ -99,7 +100,7 @@ export default async function ServicesPage({
                     <input defaultChecked={service.active} name="active" type="checkbox" value="true" />
                     Active (bookable by customers)
                   </label>
-                  <button className={styles.smallButton} type="submit">Save</button>
+                  <SubmitButton className={styles.smallButton} pendingLabel="Saving…">Save</SubmitButton>
                 </form>
               ))}
               {catalog.services.length === 0 ? <p className={styles.emptyState}>No services yet.</p> : null}
@@ -137,7 +138,7 @@ export default async function ServicesPage({
                 step="0.01"
                 type="number"
               />
-              <button className={styles.primaryButton} type="submit">Add service</button>
+              <SubmitButton className={styles.primaryButton} pendingLabel="Adding…">Add service</SubmitButton>
             </form>
 
             <div className={`${styles.panelHeader} ${styles.panelHeaderSpaced}`}>
@@ -155,9 +156,9 @@ export default async function ServicesPage({
                   <form action={updateCategory}>
                     <input name="categoryId" type="hidden" value={category.id} />
                     <input name="active" type="hidden" value={String(!category.active)} />
-                    <button className={styles.smallButton} type="submit">
+                    <SubmitButton className={styles.smallButton} pendingLabel="Saving…">
                       {category.active ? "Hide category" : "Show category"}
-                    </button>
+                    </SubmitButton>
                   </form>
                 </article>
               ))}
@@ -165,7 +166,7 @@ export default async function ServicesPage({
             <form action={createCategory} className={`${styles.providerForm} ${styles.sectionSpaced}`}>
               <label className={styles.fieldLabel} htmlFor="category-name">NEW CATEGORY NAME</label>
               <input className={styles.textInput} id="category-name" name="name" required />
-              <button className={styles.smallButton} type="submit">Add category</button>
+              <SubmitButton className={styles.smallButton} pendingLabel="Adding…">Add category</SubmitButton>
             </form>
           </div>
         </section>

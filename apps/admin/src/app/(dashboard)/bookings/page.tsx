@@ -1,5 +1,6 @@
 import { assignProvider, logoutAdmin } from "../../actions";
 import { fetchApi, formatPrice } from "../../admin-api";
+import SubmitButton from "../../SubmitButton";
 import type { Booking, Provider } from "../../types";
 import styles from "../../page.module.css";
 
@@ -72,7 +73,7 @@ export default async function BookingsPage({
         </div>
         <div className={styles.headerActions}>
           <span className={styles.status}><span className={styles.statusDot} />Live data</span>
-          <form action={logoutAdmin}><button className={styles.actionButton} type="submit">Sign out</button></form>
+          <form action={logoutAdmin}><SubmitButton className={styles.actionButton} pendingLabel="Signing out…">Sign out</SubmitButton></form>
         </div>
       </header>
 
@@ -146,7 +147,7 @@ export default async function BookingsPage({
                                     <option value="">Assign provider…</option>
                                     {assignableProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
                                   </select>
-                                  <button className={styles.smallButton} type="submit">Assign</button>
+                                  <SubmitButton className={styles.smallButton} pendingLabel="Assigning…">Assign</SubmitButton>
                                 </form>
                               ) : null}
                             </div>

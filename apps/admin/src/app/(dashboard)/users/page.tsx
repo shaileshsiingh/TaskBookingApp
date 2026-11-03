@@ -1,5 +1,6 @@
 import { logoutAdmin } from "../../actions";
 import { fetchApi, formatPrice } from "../../admin-api";
+import SubmitButton from "../../SubmitButton";
 import type { Customer } from "../../types";
 import styles from "../../page.module.css";
 
@@ -25,7 +26,7 @@ export default async function UsersPage() {
         </div>
         <div className={styles.headerActions}>
           <span className={styles.status}><span className={styles.statusDot} />Live data</span>
-          <form action={logoutAdmin}><button className={styles.actionButton} type="submit">Sign out</button></form>
+          <form action={logoutAdmin}><SubmitButton className={styles.actionButton} pendingLabel="Signing out…">Sign out</SubmitButton></form>
         </div>
       </header>
 

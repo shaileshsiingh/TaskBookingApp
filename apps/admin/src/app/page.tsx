@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { loginAdmin } from "./actions";
 import { isAdminSessionValid } from "./admin-auth";
+import SubmitButton from "./SubmitButton";
 import styles from "./page.module.css";
 
 export const instant = false;
@@ -27,7 +28,7 @@ export default async function Home({
         ) : null}
         <label className={styles.fieldLabel} htmlFor="admin-key">ADMIN KEY</label>
         <input autoComplete="current-password" className={styles.textInput} id="admin-key" name="key" required type="password" />
-        <button className={styles.primaryButton} type="submit">Sign in</button>
+        <SubmitButton className={styles.primaryButton} pendingLabel="Signing in…">Sign in</SubmitButton>
       </form>
     </main>
   );

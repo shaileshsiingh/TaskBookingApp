@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   BackHandler,
   KeyboardAvoidingView,
   Platform,
@@ -398,6 +399,7 @@ export default function App() {
     return (
       <View style={styles.authLoading}>
         <StatusBar style="dark" />
+        <ActivityIndicator color="#1877f2" />
         <Text style={styles.authLoadingText}>Checking your sign-in…</Text>
       </View>
     );
@@ -547,6 +549,10 @@ export default function App() {
                   />
                 ))}
               </ScrollView>
+            ) : null}
+
+            {isLoadingServices ? (
+              <ActivityIndicator color="#1877f2" style={styles.servicesLoader} />
             ) : null}
 
             <View style={styles.serviceList}>
@@ -1009,7 +1015,7 @@ function CategoryChip({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#f1f3f6' },
   authLoading: { alignItems: 'center', backgroundColor: '#f1f3f6', flex: 1, justifyContent: 'center' },
-  authLoadingText: { color: '#67717e', fontSize: 13 },
+  authLoadingText: { color: '#67717e', fontSize: 13, marginTop: 14 },
   myBookingsLink: { alignItems: 'center', alignSelf: 'flex-end', backgroundColor: '#1877f2', borderRadius: 11, justifyContent: 'center', marginBottom: 17, minHeight: 44, minWidth: 152, paddingHorizontal: 15 },
   myBookingsText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   confirmationBookingsLink: { alignSelf: 'center', marginBottom: 8, padding: 10 },
@@ -1041,6 +1047,7 @@ const styles = StyleSheet.create({
   sectionHeading: { marginBottom: 13 },
   sectionTitle: { color: '#252d37', fontSize: 15, fontWeight: '700' },
   sectionHint: { color: '#838d99', fontSize: 11, marginTop: 4 },
+  servicesLoader: { marginVertical: 22 },
   categoryList: { alignItems: 'center', flexDirection: 'row', gap: 8, paddingBottom: 13 },
   categoryChip: { alignItems: 'center', backgroundColor: '#fff', borderColor: '#d5dae0', borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 42, paddingHorizontal: 14 },
   categoryChipSelected: { backgroundColor: '#1877f2', borderColor: '#1877f2' },

@@ -1,5 +1,6 @@
 import { logoutAdmin, resolveDispute } from "../../actions";
 import { fetchApi, formatPrice } from "../../admin-api";
+import SubmitButton from "../../SubmitButton";
 import type { Booking } from "../../types";
 import styles from "../../page.module.css";
 
@@ -45,7 +46,7 @@ export default async function DisputesPage({
         </div>
         <div className={styles.headerActions}>
           <span className={styles.status}><span className={styles.statusDot} />Live data</span>
-          <form action={logoutAdmin}><button className={styles.actionButton} type="submit">Sign out</button></form>
+          <form action={logoutAdmin}><SubmitButton className={styles.actionButton} pendingLabel="Signing out…">Sign out</SubmitButton></form>
         </div>
       </header>
 
@@ -87,14 +88,14 @@ export default async function DisputesPage({
                       />
                       <label className={styles.fieldLabel} htmlFor={`refund-note-${booking.id}`}>NOTE</label>
                       <input className={styles.textInput} id={`refund-note-${booking.id}`} name="note" />
-                      <button className={styles.dangerButton} type="submit">Issue refund</button>
+                      <SubmitButton className={styles.dangerButton} pendingLabel="Processing…">Issue refund</SubmitButton>
                     </form>
                     <form action={resolveDispute} className={styles.disputeForm}>
                       <input name="orderId" type="hidden" value={booking.id} />
                       <input name="action" type="hidden" value="dismiss" />
                       <label className={styles.fieldLabel} htmlFor={`dismiss-note-${booking.id}`}>RESOLUTION NOTE</label>
                       <input className={styles.textInput} id={`dismiss-note-${booking.id}`} name="note" />
-                      <button className={styles.smallButton} type="submit">Dismiss, no refund</button>
+                      <SubmitButton className={styles.smallButton} pendingLabel="Processing…">Dismiss, no refund</SubmitButton>
                     </form>
                   </div>
                 </article>

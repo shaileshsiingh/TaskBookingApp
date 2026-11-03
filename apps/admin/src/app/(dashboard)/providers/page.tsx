@@ -1,5 +1,6 @@
 import { createProvider, logoutAdmin, setProviderVerification } from "../../actions";
 import { fetchApi } from "../../admin-api";
+import SubmitButton from "../../SubmitButton";
 import type { Provider, Service } from "../../types";
 import styles from "../../page.module.css";
 
@@ -46,7 +47,7 @@ export default async function ProvidersPage({
         </div>
         <div className={styles.headerActions}>
           <span className={styles.status}><span className={styles.statusDot} />Live data</span>
-          <form action={logoutAdmin}><button className={styles.actionButton} type="submit">Sign out</button></form>
+          <form action={logoutAdmin}><SubmitButton className={styles.actionButton} pendingLabel="Signing out…">Sign out</SubmitButton></form>
         </div>
       </header>
 
@@ -75,9 +76,9 @@ export default async function ProvidersPage({
                   <form action={setProviderVerification}>
                     <input name="providerId" type="hidden" value={provider.id} />
                     <input name="verified" type="hidden" value={String(!provider.verified)} />
-                    <button className={styles.smallButton} type="submit">
+                    <SubmitButton className={styles.smallButton} pendingLabel="Saving…">
                       {provider.verified ? "Remove verification" : "Verify provider"}
-                    </button>
+                    </SubmitButton>
                   </form>
                 </article>
               ))}
@@ -104,7 +105,7 @@ export default async function ProvidersPage({
                   </label>
                 ))}
               </fieldset>
-              <button className={styles.primaryButton} type="submit">Add provider</button>
+              <SubmitButton className={styles.primaryButton} pendingLabel="Adding…">Add provider</SubmitButton>
             </form>
           </div>
         </section>
