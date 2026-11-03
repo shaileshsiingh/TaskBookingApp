@@ -305,7 +305,7 @@ export default function ProviderJobsScreen({
         ) : null}
 
         {isLoading ? (
-          <ActivityIndicator color="#416b4c" style={styles.loader} />
+          <ActivityIndicator color="#3d546f" style={styles.loader} />
         ) : jobs.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No assigned jobs yet</Text>
@@ -375,7 +375,7 @@ export default function ProviderJobsScreen({
                         }))
                       }
                       placeholder="4-digit code"
-                      placeholderTextColor="#9aa39a"
+                      placeholderTextColor="#959ea8"
                       style={styles.otpInput}
                       value={otpDrafts[job.id] ?? ''}
                     />
@@ -435,12 +435,12 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
-  screen: { backgroundColor: '#f7f8f5', flex: 1 },
+  screen: { backgroundColor: '#f5f6f8', flex: 1 },
   content: { padding: 22, paddingBottom: 40, paddingTop: 56 },
   header: { alignItems: 'center', flexDirection: 'row', gap: 11 },
   brandMark: {
     alignItems: 'center',
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 13,
     height: 42,
     justifyContent: 'center',
@@ -448,27 +448,27 @@ const styles = StyleSheet.create({
   },
   brandLetter: { color: '#fff', fontSize: 20, fontWeight: '700' },
   headerText: { flex: 1 },
-  brandName: { color: '#244c38', fontSize: 16, fontWeight: '700' },
+  brandName: { color: '#1877f2', fontSize: 16, fontWeight: '700' },
   eyebrow: {
-    color: '#6f826c',
+    color: '#6a7684',
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 1,
     marginTop: 3,
   },
-  signOut: { color: '#557454', fontSize: 11, fontWeight: '700' },
+  signOut: { color: '#516277', fontSize: 11, fontWeight: '700' },
   title: {
-    color: '#1d3526',
+    color: '#1b2837',
     fontSize: 29,
     fontWeight: '700',
     letterSpacing: -0.7,
     marginTop: 35,
   },
-  subtitle: { color: '#6c796e', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  subtitle: { color: '#67717e', fontSize: 12, lineHeight: 18, marginTop: 7 },
   availabilityRow: {
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 14,
     borderWidth: 1,
     flexDirection: 'row',
@@ -477,10 +477,10 @@ const styles = StyleSheet.create({
     padding: 15,
   },
   availabilityCopy: { flex: 1 },
-  availabilityTitle: { color: '#254a34', fontSize: 13, fontWeight: '700' },
-  availabilityHint: { color: '#6c796e', fontSize: 10, marginTop: 3 },
+  availabilityTitle: { color: '#22354d', fontSize: 13, fontWeight: '700' },
+  availabilityHint: { color: '#67717e', fontSize: 10, marginTop: 3 },
   earningsCard: {
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 14,
     flexDirection: 'row',
     gap: 24,
@@ -488,7 +488,7 @@ const styles = StyleSheet.create({
     padding: 15,
   },
   earningsLabel: {
-    color: '#b9ccb9',
+    color: '#b7c1ce',
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.8,
@@ -501,8 +501,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginTop: 29,
   },
-  sectionTitle: { color: '#1d3526', fontSize: 17, fontWeight: '700' },
-  refresh: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
+  sectionTitle: { color: '#1b2837', fontSize: 17, fontWeight: '700' },
+  refresh: { color: '#3d546f', fontSize: 12, fontWeight: '700' },
   loader: { marginTop: 34 },
   error: {
     backgroundColor: '#fff4f1',
@@ -515,16 +515,16 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 14,
     borderWidth: 1,
     padding: 18,
   },
-  emptyTitle: { color: '#254a34', fontSize: 14, fontWeight: '700' },
-  emptyText: { color: '#6c796e', fontSize: 12, lineHeight: 18, marginTop: 6 },
+  emptyTitle: { color: '#22354d', fontSize: 14, fontWeight: '700' },
+  emptyText: { color: '#67717e', fontSize: 12, lineHeight: 18, marginTop: 6 },
   jobCard: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 14,
     borderWidth: 1,
     marginBottom: 12,
@@ -532,12 +532,12 @@ const styles = StyleSheet.create({
   },
   jobTop: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
   jobHeading: { flex: 1 },
-  jobName: { color: '#254a34', fontSize: 15, fontWeight: '700' },
-  customer: { color: '#6c796e', fontSize: 11, marginTop: 4 },
+  jobName: { color: '#22354d', fontSize: 15, fontWeight: '700' },
+  customer: { color: '#67717e', fontSize: 11, marginTop: 4 },
   status: {
-    backgroundColor: '#edf3ea',
+    backgroundColor: '#e9eef4',
     borderRadius: 20,
-    color: '#416b4c',
+    color: '#3d546f',
     fontSize: 9,
     fontWeight: '700',
     overflow: 'hidden',
@@ -545,10 +545,10 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   offeredStatus: { backgroundColor: '#fff2db', color: '#875b11' },
-  detail: { color: '#6c796e', fontSize: 11, marginTop: 14 },
-  address: { color: '#293a2d', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  detail: { color: '#67717e', fontSize: 11, marginTop: 14 },
+  address: { color: '#27303c', fontSize: 12, lineHeight: 18, marginTop: 7 },
   instructions: {
-    color: '#6c796e',
+    color: '#67717e',
     fontSize: 11,
     lineHeight: 17,
     marginTop: 7,
@@ -556,7 +556,7 @@ const styles = StyleSheet.create({
   offerActions: { alignItems: 'center', flexDirection: 'row', gap: 12, marginTop: 14 },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 10,
     flex: 1,
     justifyContent: 'center',
@@ -578,13 +578,13 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   otpBox: { marginTop: 14 },
-  otpLabel: { color: '#6c796e', fontSize: 11, marginBottom: 8 },
+  otpLabel: { color: '#67717e', fontSize: 11, marginBottom: 8 },
   otpInput: {
-    backgroundColor: '#fafbf9',
-    borderColor: '#e7eae4',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e3e7eb',
     borderRadius: 10,
     borderWidth: 1,
-    color: '#293a2d',
+    color: '#27303c',
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 4,

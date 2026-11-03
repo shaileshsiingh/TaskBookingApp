@@ -336,7 +336,7 @@ export default function AuthScreen({
                     autoCapitalize="words"
                     onChangeText={setName}
                     placeholder="Full name"
-                    placeholderTextColor="#9aa39a"
+                    placeholderTextColor="#959ea8"
                     style={styles.input}
                     value={name}
                   />
@@ -366,7 +366,7 @@ export default function AuthScreen({
                           ? '7–15 digits for testing'
                           : '10-digit number'
                       }
-                      placeholderTextColor="#9aa39a"
+                      placeholderTextColor="#959ea8"
                       style={styles.phoneInput}
                       value={phone}
                     />
@@ -381,7 +381,7 @@ export default function AuthScreen({
                 keyboardType="email-address"
                 onChangeText={setEmail}
                 placeholder="you@example.com"
-                placeholderTextColor="#9aa39a"
+                placeholderTextColor="#959ea8"
                 style={styles.input}
                 value={email}
               />
@@ -392,7 +392,7 @@ export default function AuthScreen({
                 autoComplete={isSignIn ? 'current-password' : 'new-password'}
                 onChangeText={setPassword}
                 placeholder="At least 8 characters"
-                placeholderTextColor="#9aa39a"
+                placeholderTextColor="#959ea8"
                 secureTextEntry
                 style={styles.input}
                 value={password}
@@ -407,7 +407,7 @@ export default function AuthScreen({
                 editable={!isPhoneVerified}
                 onChangeText={setName}
                 placeholder="Full name"
-                placeholderTextColor="#9aa39a"
+                placeholderTextColor="#959ea8"
                 style={styles.input}
                 value={name}
               />
@@ -426,7 +426,7 @@ export default function AuthScreen({
                     setPhone(digits.length > 10 ? digits.slice(-10) : digits);
                   }}
                   placeholder="10-digit number"
-                  placeholderTextColor="#9aa39a"
+                  placeholderTextColor="#959ea8"
                   style={styles.phoneInput}
                   value={phone}
                 />
@@ -443,13 +443,13 @@ export default function AuthScreen({
                 autoCapitalize="words"
                 onChangeText={setServiceArea}
                 placeholder="Area or city where you work"
-                placeholderTextColor="#9aa39a"
+                placeholderTextColor="#959ea8"
                 style={styles.input}
                 value={serviceArea}
               />
               <Text style={styles.fieldLabel}>SERVICES YOU PROVIDE</Text>
               {isLoadingServices ? (
-                <ActivityIndicator color="#416b4c" style={styles.loader} />
+                <ActivityIndicator color="#3d546f" style={styles.loader} />
               ) : (
                 <View style={styles.serviceList}>
                   {services.map((service) => {
@@ -493,7 +493,7 @@ export default function AuthScreen({
                 maxLength={6}
                 onChangeText={(value: string) => setCode(value.replace(/\D/g, ''))}
                 placeholder="Enter the code from SMS"
-                placeholderTextColor="#9aa39a"
+                placeholderTextColor="#959ea8"
                 style={styles.input}
                 value={code}
               />
@@ -586,11 +586,11 @@ function PrimaryButton({
 }
 
 const styles = StyleSheet.create({
-  screen: { backgroundColor: '#f7f8f5', flex: 1 },
+  screen: { backgroundColor: '#f5f6f8', flex: 1 },
   content: { flexGrow: 1, padding: 22, paddingBottom: 36, paddingTop: 56 },
   brandMark: {
     alignItems: 'center',
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 13,
     height: 44,
     justifyContent: 'center',
@@ -598,50 +598,50 @@ const styles = StyleSheet.create({
   },
   brandLetter: { color: '#fff', fontSize: 20, fontWeight: '700' },
   brandName: {
-    color: '#244c38',
+    color: '#1877f2',
     fontSize: 18,
     fontWeight: '700',
     marginTop: 10,
   },
   eyebrow: {
-    color: '#6f826c',
+    color: '#6a7684',
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.1,
     marginTop: 36,
   },
   title: {
-    color: '#1d3526',
+    color: '#1b2837',
     fontSize: 30,
     fontWeight: '700',
     letterSpacing: -0.7,
     marginTop: 9,
   },
-  subtitle: { color: '#6c796e', fontSize: 13, lineHeight: 20, marginTop: 8 },
+  subtitle: { color: '#67717e', fontSize: 13, lineHeight: 20, marginTop: 8 },
   roleRow: { flexDirection: 'row', gap: 9, marginTop: 24 },
   roleButton: {
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 10,
     borderWidth: 1,
     flex: 1,
     paddingHorizontal: 8,
     paddingVertical: 13,
   },
-  roleSelected: { backgroundColor: '#edf3ea', borderColor: '#66866a' },
-  roleText: { color: '#6c796e', fontSize: 12, fontWeight: '600' },
-  roleTextSelected: { color: '#416b4c' },
+  roleSelected: { backgroundColor: '#e9eef4', borderColor: '#637489' },
+  roleText: { color: '#67717e', fontSize: 12, fontWeight: '600' },
+  roleTextSelected: { color: '#3d546f' },
   card: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 15,
     borderWidth: 1,
     marginTop: 15,
     padding: 15,
   },
   fieldLabel: {
-    color: '#829082',
+    color: '#7d8895',
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.8,
@@ -649,19 +649,19 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   input: {
-    backgroundColor: '#fafbf9',
-    borderColor: '#e7eae4',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e3e7eb',
     borderRadius: 10,
     borderWidth: 1,
-    color: '#293a2d',
+    color: '#27303c',
     fontSize: 13,
     minHeight: 45,
     paddingHorizontal: 12,
   },
   phoneRow: {
     alignItems: 'center',
-    backgroundColor: '#fafbf9',
-    borderColor: '#e7eae4',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e3e7eb',
     borderRadius: 10,
     borderWidth: 1,
     flexDirection: 'row',
@@ -669,27 +669,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   countryCode: {
-    borderRightColor: '#e7eae4',
+    borderRightColor: '#e3e7eb',
     borderRightWidth: 1,
-    color: '#416b4c',
+    color: '#3d546f',
     fontSize: 13,
     fontWeight: '600',
     marginRight: 12,
     paddingRight: 12,
   },
-  phoneInput: { color: '#293a2d', flex: 1, fontSize: 13, paddingVertical: 10 },
+  phoneInput: { color: '#27303c', flex: 1, fontSize: 13, paddingVertical: 10 },
   serviceList: { gap: 8 },
   serviceOption: {
-    backgroundColor: '#fafbf9',
-    borderColor: '#e7eae4',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e3e7eb',
     borderRadius: 9,
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 11,
   },
-  serviceOptionSelected: { backgroundColor: '#edf3ea', borderColor: '#66866a' },
-  serviceOptionText: { color: '#6c796e', fontSize: 12, fontWeight: '600' },
-  serviceOptionTextSelected: { color: '#416b4c' },
+  serviceOptionSelected: { backgroundColor: '#e9eef4', borderColor: '#637489' },
+  serviceOptionText: { color: '#67717e', fontSize: 12, fontWeight: '600' },
+  serviceOptionTextSelected: { color: '#3d546f' },
   loader: { marginVertical: 12 },
   error: {
     color: '#a44338',
@@ -700,7 +700,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 12,
     marginTop: 16,
     minHeight: 50,
@@ -709,9 +709,9 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.55 },
   primaryText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   resendButton: { alignItems: 'center', paddingVertical: 14 },
-  resendText: { color: '#416b4c', fontSize: 12, fontWeight: '600' },
+  resendText: { color: '#3d546f', fontSize: 12, fontWeight: '600' },
   footnote: {
-    color: '#879187',
+    color: '#818b98',
     fontSize: 10,
     lineHeight: 15,
     marginTop: 18,

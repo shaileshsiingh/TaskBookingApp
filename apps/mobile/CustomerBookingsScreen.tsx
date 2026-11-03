@@ -310,7 +310,7 @@ export default function CustomerBookingsScreen({
         ) : null}
 
         {isLoading ? (
-          <ActivityIndicator color="#416b4c" style={styles.loader} />
+          <ActivityIndicator color="#3d546f" style={styles.loader} />
         ) : bookings.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>No bookings yet</Text>
@@ -447,7 +447,7 @@ export default function CustomerBookingsScreen({
                                 }))
                               }
                               placeholder="Optional comment"
-                              placeholderTextColor="#9aa39a"
+                              placeholderTextColor="#959ea8"
                               style={styles.commentInput}
                               value={comments[assignment.id] ?? ''}
                             />
@@ -536,7 +536,7 @@ export default function CustomerBookingsScreen({
                         setDisputeReasons((current) => ({ ...current, [booking.id]: value }))
                       }
                       placeholder="What went wrong?"
-                      placeholderTextColor="#9aa39a"
+                      placeholderTextColor="#959ea8"
                       style={styles.disputeInput}
                       value={disputeReasons[booking.id] ?? ''}
                     />
@@ -599,36 +599,36 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
-  screen: { backgroundColor: '#f7f8f5', flex: 1 },
+  screen: { backgroundColor: '#f5f6f8', flex: 1 },
   content: { padding: 22, paddingBottom: 40, paddingTop: 56 },
   header: { alignItems: 'center', flexDirection: 'row', gap: 11 },
   backButton: {
     alignItems: 'center',
-    backgroundColor: '#e9f1e5',
+    backgroundColor: '#e4eaf2',
     borderRadius: 12,
     height: 40,
     justifyContent: 'center',
     width: 40,
   },
-  backArrow: { color: '#244c38', fontSize: 29, lineHeight: 32 },
+  backArrow: { color: '#1877f2', fontSize: 29, lineHeight: 32 },
   headerCopy: { flex: 1 },
-  brandName: { color: '#244c38', fontSize: 16, fontWeight: '700' },
+  brandName: { color: '#1877f2', fontSize: 16, fontWeight: '700' },
   eyebrow: {
-    color: '#6f826c',
+    color: '#6a7684',
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 1,
     marginTop: 3,
   },
-  refresh: { color: '#416b4c', fontSize: 12, fontWeight: '700' },
+  refresh: { color: '#3d546f', fontSize: 12, fontWeight: '700' },
   title: {
-    color: '#1d3526',
+    color: '#1b2837',
     fontSize: 27,
     fontWeight: '700',
     letterSpacing: -0.6,
     marginTop: 32,
   },
-  subtitle: { color: '#6c796e', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  subtitle: { color: '#67717e', fontSize: 12, lineHeight: 18, marginTop: 7 },
   loader: { marginTop: 34 },
   error: {
     backgroundColor: '#fff4f1',
@@ -641,17 +641,17 @@ const styles = StyleSheet.create({
   },
   emptyCard: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 14,
     borderWidth: 1,
     marginTop: 23,
     padding: 18,
   },
-  emptyTitle: { color: '#254a34', fontSize: 14, fontWeight: '700' },
-  emptyText: { color: '#6c796e', fontSize: 11, lineHeight: 17, marginTop: 7 },
+  emptyTitle: { color: '#22354d', fontSize: 14, fontWeight: '700' },
+  emptyText: { color: '#67717e', fontSize: 11, lineHeight: 17, marginTop: 7 },
   bookingCard: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 14,
     borderWidth: 1,
     marginTop: 17,
@@ -659,41 +659,41 @@ const styles = StyleSheet.create({
   },
   bookingTop: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
   bookingTitleCopy: { flex: 1 },
-  serviceName: { color: '#254a34', fontSize: 15, fontWeight: '700' },
-  bookingDate: { color: '#6c796e', fontSize: 11, marginTop: 5 },
+  serviceName: { color: '#22354d', fontSize: 15, fontWeight: '700' },
+  bookingDate: { color: '#67717e', fontSize: 11, marginTop: 5 },
   orderStatus: {
-    backgroundColor: '#edf3ea',
+    backgroundColor: '#e9eef4',
     borderRadius: 20,
-    color: '#416b4c',
+    color: '#3d546f',
     fontSize: 9,
     fontWeight: '700',
     overflow: 'hidden',
     paddingHorizontal: 9,
     paddingVertical: 6,
   },
-  detail: { color: '#6c796e', fontSize: 11, marginTop: 13 },
-  address: { color: '#293a2d', fontSize: 12, lineHeight: 18, marginTop: 6 },
-  instructions: { color: '#6c796e', fontSize: 11, lineHeight: 17, marginTop: 7 },
-  divider: { backgroundColor: '#edf0ec', height: 1, marginVertical: 14 },
-  sectionTitle: { color: '#254a34', fontSize: 12, fontWeight: '700' },
+  detail: { color: '#67717e', fontSize: 11, marginTop: 13 },
+  address: { color: '#27303c', fontSize: 12, lineHeight: 18, marginTop: 6 },
+  instructions: { color: '#67717e', fontSize: 11, lineHeight: 17, marginTop: 7 },
+  divider: { backgroundColor: '#eceef0', height: 1, marginVertical: 14 },
+  sectionTitle: { color: '#22354d', fontSize: 12, fontWeight: '700' },
   assignment: {
-    borderTopColor: '#edf0ec',
+    borderTopColor: '#eceef0',
     borderTopWidth: 1,
     marginTop: 12,
     paddingTop: 12,
   },
   assignmentHeader: { alignItems: 'center', flexDirection: 'row' },
   assignmentCopy: { flex: 1 },
-  providerName: { color: '#293a2d', fontSize: 12, fontWeight: '700' },
+  providerName: { color: '#27303c', fontSize: 12, fontWeight: '700' },
   assignmentStatus: {
-    color: '#6c796e',
+    color: '#67717e',
     fontSize: 10,
     marginTop: 4,
     textTransform: 'capitalize',
   },
   actionButton: {
     alignItems: 'center',
-    backgroundColor: '#244c38',
+    backgroundColor: '#1877f2',
     borderRadius: 10,
     justifyContent: 'center',
     marginTop: 11,
@@ -704,14 +704,14 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.55 },
   otpBox: {
     alignItems: 'center',
-    backgroundColor: '#edf3ea',
+    backgroundColor: '#e9eef4',
     borderRadius: 10,
     marginTop: 11,
     padding: 12,
   },
-  otpLabel: { color: '#557657', fontSize: 10, textAlign: 'center' },
+  otpLabel: { color: '#526479', fontSize: 10, textAlign: 'center' },
   otpValue: {
-    color: '#244c38',
+    color: '#1877f2',
     fontSize: 22,
     fontWeight: '700',
     letterSpacing: 6,
@@ -732,19 +732,19 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingVertical: 10,
   },
-  reportText: { color: '#6c796e', fontSize: 11, fontWeight: '700', textDecorationLine: 'underline' },
+  reportText: { color: '#67717e', fontSize: 11, fontWeight: '700', textDecorationLine: 'underline' },
   disputeForm: {
-    backgroundColor: '#f7f8f5',
+    backgroundColor: '#f5f6f8',
     borderRadius: 11,
     marginTop: 12,
     padding: 12,
   },
   disputeInput: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 9,
     borderWidth: 1,
-    color: '#293a2d',
+    color: '#27303c',
     fontSize: 11,
     minHeight: 70,
     padding: 10,
@@ -757,7 +757,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   disputeCancelButton: { paddingHorizontal: 4, paddingVertical: 12 },
-  disputeCancelText: { color: '#6c796e', fontSize: 11, fontWeight: '700' },
+  disputeCancelText: { color: '#67717e', fontSize: 11, fontWeight: '700' },
   disputeBox: {
     backgroundColor: '#fff7ea',
     borderRadius: 10,
@@ -768,21 +768,21 @@ const styles = StyleSheet.create({
   disputeText: { color: '#5c4a26', fontSize: 11, lineHeight: 17, marginTop: 5 },
   disputeStatus: { color: '#8a7b57', fontSize: 10, marginTop: 5 },
   reviewBox: {
-    backgroundColor: '#f7f8f5',
+    backgroundColor: '#f5f6f8',
     borderRadius: 11,
     marginTop: 11,
     padding: 12,
   },
-  reviewPrompt: { color: '#254a34', fontSize: 11, fontWeight: '700' },
+  reviewPrompt: { color: '#22354d', fontSize: 11, fontWeight: '700' },
   stars: { flexDirection: 'row', gap: 6, marginTop: 8 },
   star: { color: '#c7cec4', fontSize: 29 },
   selectedStar: { color: '#d89b20' },
   commentInput: {
     backgroundColor: '#fff',
-    borderColor: '#e7eae4',
+    borderColor: '#e3e7eb',
     borderRadius: 9,
     borderWidth: 1,
-    color: '#293a2d',
+    color: '#27303c',
     fontSize: 11,
     minHeight: 60,
     marginTop: 8,
@@ -790,7 +790,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   reviewSubmitted: {
-    backgroundColor: '#f7f8f5',
+    backgroundColor: '#f5f6f8',
     borderRadius: 10,
     marginTop: 10,
     padding: 10,

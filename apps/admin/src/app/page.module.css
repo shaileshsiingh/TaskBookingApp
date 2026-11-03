@@ -1,8 +1,8 @@
 .page {
   display: flex;
   min-height: 100vh;
-  background: #f7f8f5;
-  color: #18251b;
+  background: #f5f6f8;
+  color: #171e26;
 }
 
 .sidebar {
@@ -10,7 +10,7 @@
   width: 248px;
   flex: 0 0 248px;
   flex-direction: column;
-  border-right: 1px solid #e8ece6;
+  border-right: 1px solid #e5e9ed;
   background: #fff;
   padding: 28px 18px 20px;
 }
@@ -30,8 +30,8 @@
   height: 30px;
   place-items: center;
   border-radius: 9px;
-  background: #eaf2e9;
-  color: #537b5b;
+  background: #e8edf3;
+  color: #4f657f;
   font-size: 15px;
 }
 
@@ -46,14 +46,14 @@
   align-items: center;
   gap: 11px;
   border-radius: 9px;
-  color: #69736b;
+  color: #636d79;
   font-size: 13px;
   padding: 11px 12px;
 }
 
 .active {
-  background: #eef4ed;
-  color: #42684a;
+  background: #ecf0f5;
+  color: #3f536b;
   font-weight: 600;
 }
 
@@ -67,7 +67,7 @@
 .sidebarFooter {
   margin-top: auto;
   padding: 0 10px;
-  color: #9ba39c;
+  color: #959ea9;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1.2px;
@@ -87,7 +87,7 @@
 
 .eyebrow {
   margin: 0 0 8px;
-  color: #758077;
+  color: #6e7987;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1.4px;
@@ -104,10 +104,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #e4eae2;
+  border: 1px solid #e1e6eb;
   border-radius: 999px;
   background: #fff;
-  color: #58645a;
+  color: #555d67;
   font-size: 12px;
   padding: 9px 12px;
 }
@@ -116,7 +116,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #6a9c70;
+  background: #6680a1;
 }
 
 .metricsGrid {
@@ -130,14 +130,14 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border: 1px solid #e6ece5;
+  border: 1px solid #e4e8ed;
   border-radius: 18px;
   padding: 18px 18px 16px;
   background: #fff;
 }
 
 .metricCard span {
-  color: #69756c;
+  color: #646e7a;
   font-size: 12px;
 }
 
@@ -177,7 +177,7 @@
 }
 
 .panel {
-  border: 1px solid #e6ece5;
+  border: 1px solid #e4e8ed;
   border-radius: 18px;
   background: #fff;
   padding: 22px;
@@ -197,10 +197,10 @@
 }
 
 .actionButton {
-  border: 1px solid #dfe7e0;
+  border: 1px solid #dee3e8;
   border-radius: 999px;
-  background: #f5f7f3;
-  color: #526254;
+  background: #f3f5f7;
+  color: #515963;
   cursor: pointer;
   font-size: 11px;
   padding: 8px 12px;
@@ -218,14 +218,14 @@
 .bookingsTable th,
 .bookingsTable td {
   padding: 13px 10px;
-  border-bottom: 1px solid #edf1ed;
+  border-bottom: 1px solid #edeff1;
   text-align: left;
   font-size: 12px;
-  color: #2a3930;
+  color: #29313a;
 }
 
 .bookingsTable th {
-  color: #738077;
+  color: #6d7886;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -233,7 +233,7 @@
 }
 
 .timeCell {
-  color: #738077;
+  color: #6d7886;
   margin-top: 3px;
 }
 
@@ -296,13 +296,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #324437;
+  color: #303a46;
   font-size: 13px;
   font-weight: 600;
 }
 
 .serviceMeta small {
-  color: #758077;
+  color: #6e7987;
   font-size: 11px;
   font-weight: 500;
 }
@@ -311,7 +311,7 @@
   width: 100%;
   height: 10px;
   border-radius: 999px;
-  background: #edf1ed;
+  background: #edeff1;
   overflow: hidden;
 }
 
@@ -319,7 +319,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #4d7b5d, #9bc49d);
+  background: linear-gradient(90deg, #49617f, #97adc8);
 }
 
 .headerActions {
@@ -338,7 +338,7 @@
 }
 
 .providerCard {
-  border: 1px solid #edf1ed;
+  border: 1px solid #edeff1;
   border-radius: 12px;
   padding: 14px;
 }
@@ -351,14 +351,14 @@
 }
 
 .providerHeading strong {
-  color: #2a3930;
+  color: #29313a;
   font-size: 13px;
 }
 
 .providerSkills,
 .formHint,
 .emptyState {
-  color: #758077;
+  color: #6e7987;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -379,7 +379,7 @@
 .fieldLabel {
   display: block;
   margin-top: 6px;
-  color: #758077;
+  color: #6e7987;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -388,10 +388,10 @@
 .textInput,
 .selectInput {
   min-width: 0;
-  border: 1px solid #dfe7e0;
+  border: 1px solid #dee3e8;
   border-radius: 9px;
   background: #fff;
-  color: #26362a;
+  color: #252d37;
   font: inherit;
   font-size: 13px;
   padding: 10px 11px;
@@ -413,7 +413,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #344437;
+  color: #333b45;
   font-size: 12px;
 }
 
@@ -421,7 +421,7 @@
 .smallButton {
   border: 0;
   border-radius: 9px;
-  background: #244c38;
+  background: #1877f2;
   color: #fff;
   cursor: pointer;
   font: inherit;
@@ -436,8 +436,8 @@
 }
 
 .smallButton {
-  background: #eef4ed;
-  color: #42684a;
+  background: #ecf0f5;
+  color: #3f536b;
   white-space: nowrap;
 }
 
@@ -456,14 +456,14 @@
 
 .assignmentLine {
   margin-top: 7px;
-  color: #536c58;
+  color: #515e6e;
   font-size: 11px;
 }
 
 .requirementBlock {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #edf1ed;
+  border-top: 1px solid #edeff1;
 }
 
 .requirementBlock:first-child {
@@ -488,7 +488,7 @@
 .serviceEditRow {
   display: grid;
   gap: 8px;
-  border: 1px solid #edf1ed;
+  border: 1px solid #edeff1;
   border-radius: 12px;
   padding: 14px;
 }
@@ -498,7 +498,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #2a3930;
+  color: #29313a;
   font-size: 13px;
 }
 
@@ -547,7 +547,7 @@
   display: grid;
   min-height: 100vh;
   place-items: center;
-  background: #f7f8f5;
+  background: #f5f6f8;
   padding: 24px;
 }
 
@@ -555,7 +555,7 @@
   display: grid;
   width: min(100%, 390px);
   gap: 12px;
-  border: 1px solid #e6ece5;
+  border: 1px solid #e4e8ed;
   border-radius: 18px;
   background: #fff;
   padding: 30px;
@@ -564,7 +564,7 @@
 
 .loginCard h1 {
   margin: 0;
-  color: #18251b;
+  color: #171e26;
   font-size: 24px;
 }
 
@@ -579,7 +579,7 @@
 
 .loginCopy {
   margin: 0 0 8px;
-  color: #69756c;
+  color: #646e7a;
   font-size: 13px;
   line-height: 1.5;
 }
