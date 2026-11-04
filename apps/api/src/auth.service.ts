@@ -8,6 +8,7 @@ import {
 import { UserRole } from '@prisma/client';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from '@better-auth/prisma-adapter';
+import { expo } from '@better-auth/expo';
 import { phoneNumber } from 'better-auth/plugins';
 import { IncomingHttpHeaders } from 'node:http';
 import { fromNodeHeaders } from 'better-auth/node';
@@ -56,8 +57,9 @@ function createAuth(
     account: { modelName: 'authAccount' },
     verification: { modelName: 'authVerification' },
     emailAndPassword: { enabled: authMode === 'email' },
-    plugins:
-      authMode === 'phone'
+    plugins: [
+      expo(),
+      ...(authMode === 'phone'
         ? [
             phoneNumber({
               otpLength: 6,
@@ -74,7 +76,8 @@ function createAuth(
               },
             }),
           ]
-        : [],
+        : []),
+    ],
   });
 }
 
