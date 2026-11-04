@@ -27,3 +27,16 @@ services:
         sync: false
       - key: DATABASE_URL_UNPOOLED
         sync: false
+
+  - type: web
+    name: taskbookingapp-admin
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --include=dev && npm run build -w @task-platform/admin
+    startCommand: npm run start -w @task-platform/admin
+    envVars:
+      - key: API_BASE_URL
+        value: https://taskbookingapp-api.onrender.com/api
+      - key: API_ADMIN_KEY
+        sync: false
