@@ -21,6 +21,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5e3f7111-f34a-40bc-a6bd-8aac49bb91e6"
+      }
+    },
+    "owner": "shaileshsiingh"
   }
 }
