@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: npm ci --include=dev && npm run build -w @task-platform/api && npm run db:generate -w @task-platform/api
+    buildCommand: npm ci --include=dev && npm run db:generate -w @task-platform/api && npm run build -w @task-platform/api
     startCommand: node apps/api/dist/main.js
     envVars:
       - key: NODE_ENV
