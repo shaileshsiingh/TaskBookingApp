@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
+import AnimatedPressable from './lib/AnimatedPressable';
 import { connectRealtime } from './lib/realtime';
 
 type ProviderReview = {
@@ -112,6 +114,17 @@ export default function CustomerBookingsScreen({
   const [disputeReasons, setDisputeReasons] = useState<Record<string, string>>({});
   const [submittingDisputeId, setSubmittingDisputeId] = useState<string | null>(null);
   const [error, setError] = useState(authError);
+  const syncPulse = useRef(new Animated.Value(0)).current;
+
+  const flashSyncIndicator = useCallback(() => {
+    syncPulse.setValue(1);
+    Animated.timing(syncPulse, {
+      toValue: 0,
+      duration: 1200,
+      delay: 500,
+      useNativeDriver: true,
+    }).start();
+  }, [syncPulse]);
 
   const loadBookings = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -143,7 +156,10 @@ export default function CustomerBookingsScreen({
     let isMounted = true;
     let disconnect: (() => void) | undefined;
 
-    void connectRealtime(() => void loadBookings(true)).then((cleanup) => {
+    void connectRealtime(() => {
+      void loadBookings(true);
+      flashSyncIndicator();
+    }).then((cleanup) => {
       if (isMounted) disconnect = cleanup;
       else cleanup();
     });
@@ -152,7 +168,7 @@ export default function CustomerBookingsScreen({
       isMounted = false;
       disconnect?.();
     };
-  }, [loadBookings]);
+  }, [loadBookings, flashSyncIndicator]);
 
   const updateAssignment = async (
     assignmentId: string,
@@ -297,6 +313,12 @@ export default function CustomerBookingsScreen({
         <Text style={styles.subtitle}>
           Follow provider updates and confirm each job when it is complete.
         </Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.syncBadge, { opacity: syncPulse }]}
+        >
+          <Text style={styles.syncBadgeText}>● Updated just now</Text>
+        </Animated.View>
 
         {authError ? (
           <Text accessibilityRole="alert" style={styles.error}>
@@ -587,14 +609,14 @@ function ActionButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
       style={[styles.actionButton, disabled && styles.disabled]}
     >
       <Text style={styles.actionText}>{label}</Text>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 
@@ -629,6 +651,15 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   subtitle: { color: '#67717e', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  syncBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e6f0e7',
+    borderRadius: 20,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  syncBadgeText: { color: '#2f6b43', fontSize: 10, fontWeight: '700' },
   loader: { marginTop: 34 },
   error: {
     backgroundColor: '#fff4f1',

@@ -1,24 +1,32 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  UIManager,
   View,
 } from 'react-native';
 import AuthScreen, { AuthProfileInput } from './AuthScreen';
 import CustomerBookingsScreen from './CustomerBookingsScreen';
 import ProviderJobsScreen from './ProviderJobsScreen';
 import ProviderStatusScreen from './ProviderStatusScreen';
+import AnimatedPressable from './lib/AnimatedPressable';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
 import { calculateLineAmount, PricingModel } from './lib/pricing';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const timeSlots = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM'];
 const maximumPeople = 20;
@@ -135,6 +143,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastBookingId, setLastBookingId] = useState<string | null>(null);
+  const stepOpacity = useRef(new Animated.Value(1)).current;
   const cartTotal = cart.reduce(
     (sum, item) =>
       sum + calculateLineAmount(item.service.pricingModel, item.service.price, item.people, hours),
@@ -231,6 +240,15 @@ export default function App() {
   }, [step]);
 
   useEffect(() => {
+    stepOpacity.setValue(0);
+    Animated.timing(stepOpacity, {
+      toValue: 1,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [step, stepOpacity]);
+
+  useEffect(() => {
     if (currentUser?.role !== 'CUSTOMER') {
       setSavedAddresses([]);
       return;
@@ -310,6 +328,7 @@ export default function App() {
   }, []);
 
   const toggleCartItem = (item: Service) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setCart((current) => {
       if (current.some((entry) => entry.service.id === item.id)) {
         return current.filter((entry) => entry.service.id !== item.id);
@@ -493,6 +512,7 @@ export default function App() {
           </Text>
         ) : null}
 
+        <Animated.View style={{ opacity: stepOpacity }}>
         {step === 0 ? (
           <Pressable
             accessibilityRole="button"
@@ -930,6 +950,7 @@ export default function App() {
             <Text style={styles.disclaimer}>Preview only · Nothing was sent or charged.</Text>
           </View>
         ) : null}
+        </Animated.View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -977,10 +998,10 @@ function Counter({
 
 function PrimaryButton({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.primaryButton, disabled && styles.primaryButtonDisabled]}>
+    <AnimatedPressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.primaryButton, disabled && styles.primaryButtonDisabled]}>
       <Text style={styles.primaryButtonText}>{label}</Text>
       <Text style={styles.primaryButtonArrow}>→</Text>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 

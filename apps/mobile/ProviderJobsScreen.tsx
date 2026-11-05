@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { apiBaseUrl, fetchJson } from './lib/api';
 import { authClient } from './lib/auth-client';
+import AnimatedPressable from './lib/AnimatedPressable';
 import { connectRealtime } from './lib/realtime';
 
 type AssignmentStatus =
@@ -104,6 +106,17 @@ export default function ProviderJobsScreen({
   const [isTogglingAvailability, setIsTogglingAvailability] = useState(false);
   const [earnings, setEarnings] = useState<Earnings | null>(null);
   const [otpDrafts, setOtpDrafts] = useState<Record<string, string>>({});
+  const syncPulse = useRef(new Animated.Value(0)).current;
+
+  const flashSyncIndicator = useCallback(() => {
+    syncPulse.setValue(1);
+    Animated.timing(syncPulse, {
+      toValue: 0,
+      duration: 1200,
+      delay: 500,
+      useNativeDriver: true,
+    }).start();
+  }, [syncPulse]);
 
   const loadJobs = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -146,6 +159,7 @@ export default function ProviderJobsScreen({
     void connectRealtime(() => {
       void loadJobs(true);
       void loadEarnings();
+      flashSyncIndicator();
     }).then((cleanup) => {
       if (isMounted) disconnect = cleanup;
       else cleanup();
@@ -155,7 +169,7 @@ export default function ProviderJobsScreen({
       isMounted = false;
       disconnect?.();
     };
-  }, [loadJobs, loadEarnings]);
+  }, [loadJobs, loadEarnings, flashSyncIndicator]);
 
   const toggleAvailability = async (value: boolean) => {
     setIsAvailable(value);
@@ -248,6 +262,12 @@ export default function ProviderJobsScreen({
         <Text style={styles.subtitle}>
           Review your assigned work and keep each job status up to date.
         </Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.syncBadge, { opacity: syncPulse }]}
+        >
+          <Text style={styles.syncBadgeText}>● Updated just now</Text>
+        </Animated.View>
 
         <View style={styles.availabilityRow}>
           <View style={styles.availabilityCopy}>
@@ -423,14 +443,14 @@ function ActionButton({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <AnimatedPressable
       accessibilityRole="button"
       disabled={disabled}
       onPress={onPress}
       style={[styles.actionButton, disabled && styles.disabled]}
     >
       <Text style={styles.actionText}>{label}</Text>
-    </Pressable>
+    </AnimatedPressable>
   );
 }
 
@@ -465,6 +485,15 @@ const styles = StyleSheet.create({
     marginTop: 35,
   },
   subtitle: { color: '#67717e', fontSize: 12, lineHeight: 18, marginTop: 7 },
+  syncBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e6f0e7',
+    borderRadius: 20,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  syncBadgeText: { color: '#2f6b43', fontSize: 10, fontWeight: '700' },
   availabilityRow: {
     alignItems: 'center',
     backgroundColor: '#fff',
