@@ -6,6 +6,11 @@ import styles from "../../page.module.css";
 
 export const instant = false;
 
+// A bare "offered" assignment is just a pending invite under broadcast
+// matching -- many can exist at once for one requirement. Only these
+// statuses mean a partner has actually committed to the job.
+const securedAssignmentStatuses = ["accepted", "on_the_way", "arrived", "started", "completed"];
+
 function getStatusClass(status: string) {
   if (["assigned", "accepted"].includes(status)) return styles.statusAssigned;
   if (["started", "on_the_way", "arrived", "in_progress"].includes(status)) {
@@ -50,7 +55,7 @@ export default async function BookingsPage({
   ).length;
   const assignedBookings = bookings.filter((booking) =>
     booking.requirements.some((requirement) =>
-      requirement.assignments.some((assignment) => !["cancelled", "rejected"].includes(assignment.status)),
+      requirement.assignments.some((assignment) => securedAssignmentStatuses.includes(assignment.status)),
     ),
   ).length;
   const averageValue = bookings.length
@@ -119,7 +124,7 @@ export default async function BookingsPage({
                         <span className={`${styles.statusPill} ${getStatusClass(booking.status)}`}>{booking.status.replaceAll("_", " ")}</span>
                         {booking.requirements.map((requirement) => {
                           const activeAssignments = requirement.assignments.filter(
-                            (assignment) => !["cancelled", "rejected"].includes(assignment.status),
+                            (assignment) => securedAssignmentStatuses.includes(assignment.status),
                           );
                           const eligibleProviders = providers.filter(
                             (provider) =>

@@ -10,7 +10,11 @@ import {
 import { AssignmentStatus, OrderStatus, PricingModel, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from './prisma.service.js';
 import { calculateLineAmountPaise } from './pricing.js';
-import { computeOrderStatus, computeRequirementStatus } from './order-status.js';
+import {
+  computeOrderStatus,
+  computeRequirementStatus,
+  securedAssignmentStatuses,
+} from './order-status.js';
 import { RealtimeGateway } from './realtime.gateway.js';
 
 type TransactionClient = Prisma.TransactionClient;
@@ -537,8 +541,15 @@ export class AppService {
         refundAmount:
           booking.refundAmountPaise != null ? booking.refundAmountPaise / 100 : undefined,
         requirements: booking.requirements.map((requirement) => {
+          // Broadcast matching can offer one requirement to several
+          // providers at once; the customer only cares about who's actually
+          // on the job, not the pending/lost side of the matching process.
           const assignments = booking.assignments.filter(
-            (assignment) => assignment.requirementId === requirement.id,
+            (assignment) =>
+              assignment.requirementId === requirement.id &&
+              assignment.status !== AssignmentStatus.OFFERED &&
+              assignment.status !== AssignmentStatus.REJECTED &&
+              assignment.status !== AssignmentStatus.REQUEST_CLOSED,
           );
           return {
             id: requirement.id,
@@ -1037,132 +1048,192 @@ export class AppService {
       throw new BadRequestException('status must be a supported assignment status.');
     }
 
-    const result = await this.prisma.$transaction(
-      async (transaction) => {
-        const profile = await transaction.providerProfile.findUnique({
-          where: { userId: providerId },
-          select: { verified: true },
-        });
-        if (!profile?.verified) {
-          throw new ForbiddenException('Your provider account is not verified.');
-        }
+    const result = await withSerializableRetry(() =>
+      this.prisma.$transaction(
+        async (transaction) => {
+          const profile = await transaction.providerProfile.findUnique({
+            where: { userId: providerId },
+            select: { verified: true },
+          });
+          if (!profile?.verified) {
+            throw new ForbiddenException('Your provider account is not verified.');
+          }
 
-        const assignment = await transaction.assignment.findFirst({
-          where: { id: assignmentId, providerId },
-          include: {
-            order: {
-              include: {
-                requirements: { select: { id: true, quantity: true, serviceId: true } },
-                assignments: {
-                  select: { id: true, requirementId: true, status: true },
+          const assignment = await transaction.assignment.findFirst({
+            where: { id: assignmentId, providerId },
+            include: {
+              order: {
+                include: {
+                  requirements: { select: { id: true, quantity: true, serviceId: true } },
+                  assignments: {
+                    select: { id: true, requirementId: true, status: true, providerId: true },
+                  },
                 },
               },
             },
-          },
-        });
-        if (!assignment) {
-          throw new NotFoundException('Assigned job was not found.');
-        }
+          });
+          if (!assignment) {
+            throw new NotFoundException('Assigned job was not found.');
+          }
 
-        const transitions: Partial<Record<AssignmentStatus, AssignmentStatus[]>> = {
-          [AssignmentStatus.OFFERED]: [
-            AssignmentStatus.ACCEPTED,
-            AssignmentStatus.REJECTED,
-          ],
-          [AssignmentStatus.ACCEPTED]: [
-            AssignmentStatus.ON_THE_WAY,
-            AssignmentStatus.CANCELLED,
-          ],
-          [AssignmentStatus.ON_THE_WAY]: [
-            AssignmentStatus.ARRIVED,
-            AssignmentStatus.CANCELLED,
-          ],
-          [AssignmentStatus.ARRIVED]: [
-            AssignmentStatus.STARTED,
-            AssignmentStatus.CANCELLED,
-          ],
-          [AssignmentStatus.STARTED]: [AssignmentStatus.COMPLETED],
-        };
-        const nextStatus = requestedStatus.toUpperCase() as AssignmentStatus;
-        if (!transitions[assignment.status]?.includes(nextStatus)) {
-          throw new BadRequestException(
-            `Cannot change an assignment from ${assignment.status.toLowerCase()} to ${requestedStatus.toLowerCase()}.`,
-          );
-        }
-
-        if (nextStatus === AssignmentStatus.STARTED) {
-          const suppliedOtp = typeof otpInput === 'string' ? otpInput.trim() : '';
-          if (!suppliedOtp || suppliedOtp !== assignment.startOtp) {
+          const transitions: Partial<Record<AssignmentStatus, AssignmentStatus[]>> = {
+            [AssignmentStatus.OFFERED]: [
+              AssignmentStatus.ACCEPTED,
+              AssignmentStatus.REJECTED,
+            ],
+            [AssignmentStatus.ACCEPTED]: [
+              AssignmentStatus.ON_THE_WAY,
+              AssignmentStatus.CANCELLED,
+            ],
+            [AssignmentStatus.ON_THE_WAY]: [
+              AssignmentStatus.ARRIVED,
+              AssignmentStatus.CANCELLED,
+            ],
+            [AssignmentStatus.ARRIVED]: [
+              AssignmentStatus.STARTED,
+              AssignmentStatus.CANCELLED,
+            ],
+            [AssignmentStatus.STARTED]: [AssignmentStatus.COMPLETED],
+          };
+          const nextStatus = requestedStatus.toUpperCase() as AssignmentStatus;
+          if (!transitions[assignment.status]?.includes(nextStatus)) {
             throw new BadRequestException(
-              'Incorrect OTP. Ask the customer for the code shown in their app.',
+              `Cannot change an assignment from ${assignment.status.toLowerCase()} to ${requestedStatus.toLowerCase()}.`,
             );
           }
-        }
 
-        const updated = await transaction.assignment.updateMany({
-          where: {
-            id: assignment.id,
-            providerId,
-            status: assignment.status,
-          },
-          data: {
-            status: nextStatus,
-            ...(nextStatus === AssignmentStatus.ACCEPTED
-              ? { acceptedAt: new Date() }
-              : {}),
-            ...(nextStatus === AssignmentStatus.ARRIVED
-              ? { startOtp: generateStartOtp() }
-              : {}),
-            ...(nextStatus === AssignmentStatus.STARTED
-              ? { startOtp: null }
-              : {}),
-            ...(nextStatus === AssignmentStatus.COMPLETED
-              ? { completedAt: new Date() }
-              : {}),
-          },
-        });
-        if (updated.count !== 1) {
-          throw new ConflictException('This assigned job changed. Refresh and try again.');
-        }
+          if (nextStatus === AssignmentStatus.STARTED) {
+            const suppliedOtp = typeof otpInput === 'string' ? otpInput.trim() : '';
+            if (!suppliedOtp || suppliedOtp !== assignment.startOtp) {
+              throw new BadRequestException(
+                'Incorrect OTP. Ask the customer for the code shown in their app.',
+              );
+            }
+          }
 
-        const requiresReassignment =
-          nextStatus === AssignmentStatus.REJECTED || nextStatus === AssignmentStatus.CANCELLED;
-        const orderStatus = requiresReassignment
-          ? OrderStatus.REASSIGNMENT_REQUIRED
-          : computeOrderStatus(
-              assignment.order.requirements.map((requirement) => ({
-                quantity: requirement.quantity,
-                assignmentStatuses: assignment.order.assignments
-                  .filter((item) => item.requirementId === requirement.id)
-                  .map((item) => (item.id === assignment.id ? nextStatus : item.status)),
-              })),
-            );
+          const requirement = assignment.order.requirements.find(
+            (item) => item.id === assignment.requirementId,
+          )!;
 
-        if (orderStatus !== assignment.order.status) {
-          await transaction.order.update({
-            where: { id: assignment.orderId },
-            data: { status: orderStatus },
+          // Broadcast matching means several providers can hold a live
+          // OFFERED row for the same requirement at once. First to accept
+          // wins the slot; anyone trying to accept after it's already full
+          // gets a clear "filled" error instead of silently over-allocating.
+          if (nextStatus === AssignmentStatus.ACCEPTED) {
+            const securedOnRequirement = assignment.order.assignments.filter(
+              (item) =>
+                item.requirementId === assignment.requirementId &&
+                item.id !== assignment.id &&
+                securedAssignmentStatuses.has(item.status),
+            ).length;
+            if (securedOnRequirement >= requirement.quantity) {
+              throw new ConflictException(
+                'This position has already been filled by another partner.',
+              );
+            }
+          }
+
+          const updated = await transaction.assignment.updateMany({
+            where: {
+              id: assignment.id,
+              providerId,
+              status: assignment.status,
+            },
+            data: {
+              status: nextStatus,
+              ...(nextStatus === AssignmentStatus.ACCEPTED
+                ? { acceptedAt: new Date() }
+                : {}),
+              ...(nextStatus === AssignmentStatus.ARRIVED
+                ? { startOtp: generateStartOtp() }
+                : {}),
+              ...(nextStatus === AssignmentStatus.STARTED
+                ? { startOtp: null }
+                : {}),
+              ...(nextStatus === AssignmentStatus.COMPLETED
+                ? { completedAt: new Date() }
+                : {}),
+            },
           });
-        }
+          if (updated.count !== 1) {
+            throw new ConflictException('This assigned job changed. Refresh and try again.');
+          }
 
-        const requirement = assignment.order.requirements.find(
-          (item) => item.id === assignment.requirementId,
-        )!;
+          // Once accepting this one fills every slot on the requirement,
+          // close out every other still-open offer so those providers see
+          // the job is gone instead of a stale "Accept" button.
+          let closedProviderIds: string[] = [];
+          if (nextStatus === AssignmentStatus.ACCEPTED) {
+            const securedAfter =
+              assignment.order.assignments.filter(
+                (item) =>
+                  item.requirementId === assignment.requirementId &&
+                  item.id !== assignment.id &&
+                  securedAssignmentStatuses.has(item.status),
+              ).length + 1;
+            if (securedAfter >= requirement.quantity) {
+              const stillOffered = assignment.order.assignments.filter(
+                (item) =>
+                  item.requirementId === assignment.requirementId &&
+                  item.id !== assignment.id &&
+                  item.status === AssignmentStatus.OFFERED,
+              );
+              if (stillOffered.length > 0) {
+                await transaction.assignment.updateMany({
+                  where: { id: { in: stillOffered.map((item) => item.id) } },
+                  data: { status: AssignmentStatus.REQUEST_CLOSED },
+                });
+                closedProviderIds = stillOffered.map((item) => item.providerId);
+              }
+            }
+          }
 
-        return {
-          id: assignment.id,
-          status: nextStatus.toLowerCase(),
-          orderId: assignment.orderId,
-          requirementId: assignment.requirementId,
-          serviceId: requirement.serviceId,
-          customerId: assignment.order.customerId,
-          requiresReassignment,
-        };
-      },
-      { isolationLevel: 'Serializable' },
+          const requiresReassignment =
+            nextStatus === AssignmentStatus.REJECTED || nextStatus === AssignmentStatus.CANCELLED;
+          const orderStatus = requiresReassignment
+            ? OrderStatus.REASSIGNMENT_REQUIRED
+            : computeOrderStatus(
+                assignment.order.requirements.map((item) => ({
+                  quantity: item.quantity,
+                  assignmentStatuses: assignment.order.assignments
+                    .filter((entry) => entry.requirementId === item.id)
+                    .map((entry) => {
+                      if (entry.id === assignment.id) return nextStatus;
+                      if (closedProviderIds.length > 0 && entry.status === AssignmentStatus.OFFERED) {
+                        return AssignmentStatus.REQUEST_CLOSED;
+                      }
+                      return entry.status;
+                    }),
+                })),
+              );
+
+          if (orderStatus !== assignment.order.status) {
+            await transaction.order.update({
+              where: { id: assignment.orderId },
+              data: { status: orderStatus },
+            });
+          }
+
+          return {
+            id: assignment.id,
+            status: nextStatus.toLowerCase(),
+            orderId: assignment.orderId,
+            requirementId: assignment.requirementId,
+            serviceId: requirement.serviceId,
+            customerId: assignment.order.customerId,
+            requiresReassignment,
+            closedProviderIds,
+          };
+        },
+        { isolationLevel: 'Serializable' },
+      ),
     );
 
-    this.realtime.notifyUsers([result.customerId, providerId]);
+    if (!result) {
+      throw new ConflictException('This assigned job changed. Refresh and try again.');
+    }
+
+    this.realtime.notifyUsers([result.customerId, providerId, ...result.closedProviderIds]);
 
     if (result.requiresReassignment) {
       await this.attemptAutomaticReassignment(
@@ -1374,12 +1445,20 @@ export class AppService {
     return response;
   }
 
-  private async findEligibleProvider(
+  /**
+   * Finds every provider eligible for a requirement, ranked by current
+   * workload (least busy first) -- NOT just the single best match. Under
+   * broadcast matching (createBooking), an OFFERED assignment is created for
+   * every one of these; under replacement (createReplacementAssignment),
+   * only the first is used.
+   */
+  private async findEligibleProviders(
     transaction: TransactionClient,
     requirementId: string,
     serviceId: string,
     excludeProviderIds: string[],
-  ): Promise<string | null> {
+    scheduleWindow: { orderId: string; scheduledAt: Date; durationMinutes: number },
+  ): Promise<string[]> {
     const activeOnRequirement = await transaction.assignment.findMany({
       where: { requirementId, status: { in: [...activeAssignmentStatuses] } },
       select: { providerId: true },
@@ -1398,12 +1477,44 @@ export class AppService {
       },
       select: { userId: true },
     });
-    if (candidates.length === 0) return null;
+    if (candidates.length === 0) return [];
+
+    // Exclude providers already committed to a conflicting time window on a
+    // different order (SRS BR-12 / 3.3 / 3.8 -- a partner can't be double-booked).
+    const windowStart = scheduleWindow.scheduledAt;
+    const windowEnd = new Date(windowStart.getTime() + scheduleWindow.durationMinutes * 60_000);
+    const otherAssignments = await transaction.assignment.findMany({
+      where: {
+        providerId: { in: candidates.map((candidate) => candidate.userId) },
+        status: { in: [...activeAssignmentStatuses] },
+        orderId: { not: scheduleWindow.orderId },
+      },
+      select: {
+        providerId: true,
+        order: {
+          select: { scheduledAt: true, durationMinutes: true, standardDurationMinutes: true },
+        },
+      },
+    });
+    const conflictedProviderIds = new Set(
+      otherAssignments
+        .filter((item) => {
+          const otherStart = item.order.scheduledAt;
+          const otherMinutes = item.order.durationMinutes ?? item.order.standardDurationMinutes;
+          const otherEnd = new Date(otherStart.getTime() + otherMinutes * 60_000);
+          return otherStart < windowEnd && otherEnd > windowStart;
+        })
+        .map((item) => item.providerId),
+    );
+    const available = candidates.filter(
+      (candidate) => !conflictedProviderIds.has(candidate.userId),
+    );
+    if (available.length === 0) return [];
 
     const workloads = await transaction.assignment.groupBy({
       by: ['providerId'],
       where: {
-        providerId: { in: candidates.map((candidate) => candidate.userId) },
+        providerId: { in: available.map((candidate) => candidate.userId) },
         status: { in: [...activeAssignmentStatuses] },
       },
       _count: { _all: true },
@@ -1412,12 +1523,13 @@ export class AppService {
       workloads.map((entry) => [entry.providerId, entry._count._all]),
     );
 
-    return candidates
+    return available
       .slice()
       .sort(
         (a, b) =>
           (workloadByProvider.get(a.userId) ?? 0) - (workloadByProvider.get(b.userId) ?? 0),
-      )[0].userId;
+      )
+      .map((candidate) => candidate.userId);
   }
 
   private async createReplacementAssignment(
@@ -1431,16 +1543,22 @@ export class AppService {
         async (transaction) => {
           const order = await transaction.order.findUnique({
             where: { id: orderId },
-            select: { status: true },
+            select: { status: true, scheduledAt: true, durationMinutes: true, standardDurationMinutes: true },
           });
           if (!order || order.status !== OrderStatus.REASSIGNMENT_REQUIRED) return null;
 
-          const replacementProviderId = await this.findEligibleProvider(
+          const eligibleProviderIds = await this.findEligibleProviders(
             transaction,
             requirementId,
             serviceId,
             excludeProviderIds,
+            {
+              orderId,
+              scheduledAt: order.scheduledAt,
+              durationMinutes: order.durationMinutes ?? order.standardDurationMinutes,
+            },
           );
+          const replacementProviderId = eligibleProviderIds[0];
           if (!replacementProviderId) return null;
 
           await transaction.assignment.create({
@@ -1603,7 +1721,7 @@ export class AppService {
     });
     const totalAmountPaise = lineItems.reduce((sum, item) => sum + item.lineAmountPaise, 0);
 
-    const order = await this.prisma.$transaction(async (transaction) => {
+    const { order, offeredProviderIds } = await this.prisma.$transaction(async (transaction) => {
       const customer = await transaction.user.upsert({
         where: { phone: customerPhone },
         update: { name: customerName },
@@ -1614,12 +1732,13 @@ export class AppService {
         },
       });
 
-      return transaction.order.create({
+      const createdOrder = await transaction.order.create({
         data: {
           customerId: customer.id,
           status: OrderStatus.PENDING,
           scheduledAt,
           durationMinutes: hours * 60,
+          standardDurationMinutes: hours * 60,
           address,
           instructions: instructions || null,
           totalAmountPaise,
@@ -1640,7 +1759,37 @@ export class AppService {
           },
         },
       });
+
+      // Broadcast matching (SRS 4.3/BR-09): offer every requirement to every
+      // eligible provider at once rather than picking one. Whoever accepts
+      // first fills the slot (handled in updateProviderAssignment); admin
+      // only steps in if everyone rejects (reassignment.scheduler.ts).
+      const allOfferedProviderIds: string[] = [];
+      for (const requirement of createdOrder.requirements) {
+        const eligibleProviderIds = await this.findEligibleProviders(
+          transaction,
+          requirement.id,
+          requirement.serviceId,
+          [],
+          { orderId: createdOrder.id, scheduledAt, durationMinutes: hours * 60 },
+        );
+        if (eligibleProviderIds.length === 0) continue;
+        await transaction.assignment.createMany({
+          data: eligibleProviderIds.map((providerId) => ({
+            orderId: createdOrder.id,
+            requirementId: requirement.id,
+            providerId,
+          })),
+        });
+        allOfferedProviderIds.push(...eligibleProviderIds);
+      }
+
+      return { order: createdOrder, offeredProviderIds: allOfferedProviderIds };
     });
+
+    if (offeredProviderIds.length > 0) {
+      this.realtime.notifyUsers(offeredProviderIds);
+    }
 
     const dateTime = formatIndiaDateTime(order.scheduledAt);
 

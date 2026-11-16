@@ -1,20 +1,27 @@
 import { AssignmentStatus, OrderStatus } from '@prisma/client';
 
-const inactiveAssignmentStatuses = new Set<AssignmentStatus>([
-  AssignmentStatus.REJECTED,
-  AssignmentStatus.CANCELLED,
+/**
+ * Statuses that represent a provider who has actually committed to the job.
+ * A bare OFFERED does not count -- under broadcast matching, many providers
+ * can be simultaneously offered the same requirement, so counting OFFERED
+ * toward "covered" would report a requirement as staffed before anyone has
+ * accepted.
+ */
+export const securedAssignmentStatuses = new Set<AssignmentStatus>([
+  AssignmentStatus.ACCEPTED,
+  AssignmentStatus.ON_THE_WAY,
+  AssignmentStatus.ARRIVED,
+  AssignmentStatus.STARTED,
 ]);
 
-const leastAdvancedActiveStatus: AssignmentStatus[] = [
-  AssignmentStatus.OFFERED,
+const leastAdvancedSecuredStatus: AssignmentStatus[] = [
   AssignmentStatus.ACCEPTED,
   AssignmentStatus.ON_THE_WAY,
   AssignmentStatus.ARRIVED,
   AssignmentStatus.STARTED,
 ];
 
-const activeStatusToOrderStatus: Partial<Record<AssignmentStatus, OrderStatus>> = {
-  [AssignmentStatus.OFFERED]: OrderStatus.ASSIGNED,
+const securedStatusToOrderStatus: Partial<Record<AssignmentStatus, OrderStatus>> = {
   [AssignmentStatus.ACCEPTED]: OrderStatus.ACCEPTED,
   [AssignmentStatus.ON_THE_WAY]: OrderStatus.ON_THE_WAY,
   [AssignmentStatus.ARRIVED]: OrderStatus.ARRIVED,
@@ -43,16 +50,19 @@ export function computeRequirementStatus(
   if (completedCount >= quantity) return OrderStatus.COMPLETED;
   if (completedCount > 0) return OrderStatus.PARTIALLY_COMPLETED;
 
-  const active = assignmentStatuses.filter(
-    (status) => !inactiveAssignmentStatuses.has(status),
-  );
-  const covered = active.length >= quantity;
+  const secured = assignmentStatuses.filter((status) => securedAssignmentStatuses.has(status));
+  const covered = secured.length >= quantity;
   if (!covered) {
-    return active.length > 0 ? OrderStatus.PARTIALLY_ASSIGNED : OrderStatus.PENDING;
+    // At least one partner has actually accepted, even though the
+    // requirement isn't fully staffed yet (SRS: "Partially Assigned").
+    if (secured.length > 0) return OrderStatus.PARTIALLY_ASSIGNED;
+    // Nobody has accepted yet -- whether offers are out or not, this is
+    // "Awaiting Partners" from the customer's point of view.
+    return OrderStatus.PENDING;
   }
 
-  const leastAdvanced = leastAdvancedActiveStatus.find((status) => active.includes(status));
-  return leastAdvanced ? activeStatusToOrderStatus[leastAdvanced]! : OrderStatus.PENDING;
+  const leastAdvanced = leastAdvancedSecuredStatus.find((status) => secured.includes(status));
+  return leastAdvanced ? securedStatusToOrderStatus[leastAdvanced]! : OrderStatus.PENDING;
 }
 
 export function computeOrderStatus(

@@ -25,6 +25,7 @@ type AssignmentStatus =
   | 'started'
   | 'completed'
   | 'rejected'
+  | 'request_closed'
   | 'cancelled'
   | 'replacement_required';
 
@@ -60,6 +61,7 @@ const statusLabels: Record<AssignmentStatus, string> = {
   started: 'In progress',
   completed: 'Completed',
   rejected: 'Declined',
+  request_closed: 'Filled by another partner',
   cancelled: 'Cancelled',
   replacement_required: 'Replacement needed',
 };
@@ -348,6 +350,7 @@ export default function ProviderJobsScreen({
                     style={[
                       styles.status,
                       job.status === 'offered' && styles.offeredStatus,
+                      job.status === 'request_closed' && styles.requestClosedStatus,
                     ]}
                   >
                     {statusLabels[job.status]}
@@ -574,6 +577,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   offeredStatus: { backgroundColor: '#fff2db', color: '#875b11' },
+  requestClosedStatus: { backgroundColor: '#edeff1', color: '#6d7886' },
   detail: { color: '#67717e', fontSize: 11, marginTop: 14 },
   address: { color: '#27303c', fontSize: 12, lineHeight: 18, marginTop: 7 },
   instructions: {

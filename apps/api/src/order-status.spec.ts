@@ -21,10 +21,42 @@ describe('computeRequirementStatus', () => {
 
   it('reports ACCEPTED once every slot is covered and the least-advanced is ACCEPTED', () => {
     expect(
-      computeRequirementStatus(2, [AssignmentStatus.ACCEPTED, AssignmentStatus.OFFERED]),
-    ).toBe(OrderStatus.ASSIGNED);
-    expect(
       computeRequirementStatus(2, [AssignmentStatus.ACCEPTED, AssignmentStatus.ACCEPTED]),
+    ).toBe(OrderStatus.ACCEPTED);
+  });
+
+  it('does not count a bare OFFERED toward coverage, even with many simultaneous offers', () => {
+    // Broadcast matching: 5 providers offered a 2-person requirement, none accepted yet.
+    expect(
+      computeRequirementStatus(2, [
+        AssignmentStatus.OFFERED,
+        AssignmentStatus.OFFERED,
+        AssignmentStatus.OFFERED,
+        AssignmentStatus.OFFERED,
+        AssignmentStatus.OFFERED,
+      ]),
+    ).toBe(OrderStatus.PENDING);
+  });
+
+  it('reports PARTIALLY_ASSIGNED when one has accepted while other offers are still open', () => {
+    expect(
+      computeRequirementStatus(2, [
+        AssignmentStatus.ACCEPTED,
+        AssignmentStatus.OFFERED,
+        AssignmentStatus.OFFERED,
+      ]),
+    ).toBe(OrderStatus.PARTIALLY_ASSIGNED);
+  });
+
+  it('treats REQUEST_CLOSED like REJECTED/CANCELLED when checking coverage', () => {
+    expect(
+      computeRequirementStatus(2, [
+        AssignmentStatus.ACCEPTED,
+        AssignmentStatus.ACCEPTED,
+        AssignmentStatus.REQUEST_CLOSED,
+        AssignmentStatus.REQUEST_CLOSED,
+        AssignmentStatus.REQUEST_CLOSED,
+      ]),
     ).toBe(OrderStatus.ACCEPTED);
   });
 

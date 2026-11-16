@@ -75,6 +75,7 @@ describe('AppController', () => {
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
       create: vi.fn().mockResolvedValue({
         id: 'assignment-123',
         status: 'OFFERED',
@@ -315,6 +316,31 @@ describe('AppController', () => {
       });
     });
 
+    it('broadcasts an OFFERED assignment to every eligible provider for each requirement', async () => {
+      transaction.providerProfile.findMany.mockResolvedValueOnce([
+        { userId: 'provider-a' },
+        { userId: 'provider-b' },
+      ]);
+      transaction.assignment.groupBy.mockResolvedValueOnce([]);
+
+      await appController.createBooking({ headers: {} } as never, bookingInput);
+
+      expect(transaction.assignment.createMany).toHaveBeenCalledWith({
+        data: [
+          { orderId: 'order-123', requirementId: 'requirement-123', providerId: 'provider-a' },
+          { orderId: 'order-123', requirementId: 'requirement-123', providerId: 'provider-b' },
+        ],
+      });
+      expect(realtimeGateway.notifyUsers).toHaveBeenCalledWith(['provider-a', 'provider-b']);
+    });
+
+    it('does not broadcast or notify anyone when no eligible provider exists yet', async () => {
+      await appController.createBooking({ headers: {} } as never, bookingInput);
+
+      expect(transaction.assignment.createMany).not.toHaveBeenCalled();
+      expect(realtimeGateway.notifyUsers).not.toHaveBeenCalled();
+    });
+
     it('creates one requirement per item and sums their pricing-model-aware totals', async () => {
       prisma.service.findMany.mockResolvedValueOnce([
         {
@@ -415,10 +441,9 @@ describe('AppController', () => {
         providerName: 'Asha Provider',
         status: 'offered',
       });
-      expect(transaction.order.update).toHaveBeenCalledWith({
-        where: { id: 'order-123' },
-        data: { status: 'PARTIALLY_ASSIGNED' },
-      });
+      // A bare OFFERED (nobody has accepted yet) stays PENDING ("Awaiting
+      // Partners") under broadcast matching, so no status change is needed.
+      expect(transaction.order.update).not.toHaveBeenCalled();
     });
 
     it('rejects assigning a provider to a requirement that is not on the booking', async () => {
@@ -912,8 +937,15 @@ describe('AppController', () => {
           ],
         },
       });
-      transaction.order.findUnique.mockResolvedValueOnce({ status: 'REASSIGNMENT_REQUIRED' });
-      transaction.assignment.findMany.mockResolvedValueOnce([{ providerId: 'provider-other' }]);
+      transaction.order.findUnique.mockResolvedValueOnce({
+        status: 'REASSIGNMENT_REQUIRED',
+        scheduledAt: new Date('2026-12-01T10:00:00Z'),
+        durationMinutes: 480,
+        standardDurationMinutes: 480,
+      });
+      transaction.assignment.findMany
+        .mockResolvedValueOnce([{ providerId: 'provider-other' }])
+        .mockResolvedValueOnce([]);
       transaction.providerProfile.findMany.mockResolvedValueOnce([{ userId: 'provider-456' }]);
       transaction.assignment.groupBy.mockResolvedValueOnce([]);
       transaction.order.findUniqueOrThrow.mockResolvedValueOnce({
@@ -935,10 +967,74 @@ describe('AppController', () => {
         where: { id: 'order-123' },
         data: { status: 'REASSIGNMENT_REQUIRED' },
       });
+      // Both the replacement and the pre-existing other candidate are still
+      // only OFFERED (not yet accepted) -- under broadcast matching, that
+      // stays PENDING ("Awaiting Partners"), not ASSIGNED.
       expect(transaction.order.update).toHaveBeenNthCalledWith(2, {
         where: { id: 'order-123' },
-        data: { status: 'ASSIGNED' },
+        data: { status: 'PENDING' },
       });
+    });
+
+    it('rejects an accept once the requirement has already been filled by another partner', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'OFFERED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        startOtp: null,
+        order: {
+          status: 'PARTIALLY_ASSIGNED',
+          customerId: 'customer-123',
+          requirements: [{ id: 'requirement-123', quantity: 2, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'OFFERED', providerId: 'provider-123' },
+            { id: 'assignment-a', requirementId: 'requirement-123', status: 'ACCEPTED', providerId: 'provider-a' },
+            { id: 'assignment-b', requirementId: 'requirement-123', status: 'ACCEPTED', providerId: 'provider-b' },
+          ],
+        },
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'accepted'),
+      ).rejects.toThrow('This position has already been filled by another partner.');
+
+      expect(transaction.assignment.updateMany).not.toHaveBeenCalled();
+      expect(realtimeGateway.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('closes every other open offer on a requirement once an acceptance fills the last slot', async () => {
+      transaction.assignment.findFirst.mockResolvedValueOnce({
+        id: 'assignment-999',
+        status: 'OFFERED',
+        requirementId: 'requirement-123',
+        orderId: 'order-123',
+        startOtp: null,
+        order: {
+          status: 'PARTIALLY_ASSIGNED',
+          customerId: 'customer-123',
+          requirements: [{ id: 'requirement-123', quantity: 2, serviceId: 'home-help' }],
+          assignments: [
+            { id: 'assignment-999', requirementId: 'requirement-123', status: 'OFFERED', providerId: 'provider-123' },
+            { id: 'assignment-a', requirementId: 'requirement-123', status: 'ACCEPTED', providerId: 'provider-a' },
+            { id: 'assignment-c', requirementId: 'requirement-123', status: 'OFFERED', providerId: 'provider-c' },
+          ],
+        },
+      });
+
+      await expect(
+        appService.updateProviderAssignment('provider-123', 'assignment-999', 'accepted'),
+      ).resolves.toEqual({ id: 'assignment-999', status: 'accepted' });
+
+      expect(transaction.assignment.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['assignment-c'] } },
+        data: { status: 'REQUEST_CLOSED' },
+      });
+      expect(realtimeGateway.notifyUsers).toHaveBeenCalledWith([
+        'customer-123',
+        'provider-123',
+        'provider-c',
+      ]);
     });
 
     it('leaves the booking reassignment-required when no replacement provider is available', async () => {
@@ -1156,7 +1252,12 @@ describe('AppController', () => {
         },
       ]);
       prisma.assignment.findMany.mockResolvedValueOnce([]);
-      transaction.order.findUnique.mockResolvedValueOnce({ status: 'REASSIGNMENT_REQUIRED' });
+      transaction.order.findUnique.mockResolvedValueOnce({
+        status: 'REASSIGNMENT_REQUIRED',
+        scheduledAt: new Date('2026-12-01T10:00:00Z'),
+        durationMinutes: 480,
+        standardDurationMinutes: 480,
+      });
       transaction.assignment.findMany.mockResolvedValueOnce([]);
       transaction.providerProfile.findMany.mockResolvedValueOnce([{ userId: 'provider-789' }]);
       transaction.assignment.groupBy.mockResolvedValueOnce([]);
