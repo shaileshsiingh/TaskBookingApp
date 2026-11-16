@@ -44,12 +44,25 @@ enum AssignmentStatus {
   OFFERED
   ACCEPTED
   REJECTED
+  REQUEST_CLOSED
   ON_THE_WAY
   ARRIVED
   STARTED
   COMPLETED
   CANCELLED
   REPLACEMENT_REQUIRED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
 }
 
 model User {
@@ -141,13 +154,17 @@ model AuthVerification {
 }
 
 model ProviderProfile {
-  id          String          @id @default(cuid())
-  userId      String          @unique
-  verified    Boolean         @default(false)
-  available   Boolean         @default(true)
-  serviceArea String?
-  user        User            @relation(fields: [userId], references: [id])
-  skills      ProviderSkill[]
+  id              String          @id @default(cuid())
+  userId          String          @unique
+  verified        Boolean         @default(false)
+  available       Boolean         @default(true)
+  serviceArea     String?
+  ageYears        Int?
+  photoUrl        String?
+  experienceYears Int?
+  documentsUrl    String?
+  user            User            @relation(fields: [userId], references: [id])
+  skills          ProviderSkill[]
 }
 
 model Category {
@@ -159,16 +176,18 @@ model Category {
 }
 
 model Service {
-  id             String          @id @default(cuid())
-  categoryId     String
-  name           String
-  description    String?
-  pricingModel   PricingModel
-  unitPricePaise Int
-  active         Boolean         @default(true)
-  category       Category        @relation(fields: [categoryId], references: [id])
-  providerSkills ProviderSkill[]
-  requirements   Requirement[]
+  id                      String          @id @default(cuid())
+  categoryId              String
+  name                    String
+  description             String?
+  pricingModel            PricingModel
+  unitPricePaise          Int
+  active                  Boolean         @default(true)
+  standardDurationMinutes Int             @default(480)
+  overtimeRatePaise       Int?
+  category                Category        @relation(fields: [categoryId], references: [id])
+  providerSkills          ProviderSkill[]
+  requirements            Requirement[]
 }
 
 model ProviderSkill {
@@ -182,27 +201,64 @@ model ProviderSkill {
 }
 
 model Order {
-  id               String        @id @default(cuid())
-  customerId       String
-  status           OrderStatus   @default(PENDING)
-  scheduledAt      DateTime
-  durationMinutes  Int?
-  address          String
-  instructions     String?
-  currency         String        @default("INR")
-  totalAmountPaise Int?
-  cancelledAt      DateTime?
-  cancellationFeePaise Int?
-  disputeReason    String?
-  disputedAt       DateTime?
-  resolutionNote   String?
-  refundedAt       DateTime?
-  refundAmountPaise Int?
-  customer         User          @relation("CustomerOrders", fields: [customerId], references: [id])
-  requirements     Requirement[]
-  assignments      Assignment[]
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id                      String          @id @default(cuid())
+  customerId              String
+  status                  OrderStatus     @default(PENDING)
+  scheduledAt             DateTime
+  durationMinutes         Int?
+  address                 String
+  latitude                Float?
+  longitude               Float?
+  instructions            String?
+  currency                String          @default("INR")
+  totalAmountPaise        Int?
+  paymentMethod           PaymentMethod?
+  standardDurationMinutes Int             @default(480)
+  overtimeMinutes         Int             @default(0)
+  overtimeAmountPaise     Int             @default(0)
+  cancelledAt             DateTime?
+  cancellationFeePaise    Int?
+  disputeReason           String?
+  disputedAt              DateTime?
+  resolutionNote          String?
+  refundedAt              DateTime?
+  refundAmountPaise       Int?
+  customer                User            @relation("CustomerOrders", fields: [customerId], references: [id])
+  requirements            Requirement[]
+  assignments             Assignment[]
+  payments                Payment[]
+  history                 BookingHistory[]
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  orderId           String
+  customerId        String
+  amountPaise       Int
+  method            PaymentMethod
+  transactionRef    String?
+  status            PaymentStatus @default(PENDING)
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([customerId])
+}
+
+model BookingHistory {
+  id             String   @id @default(cuid())
+  orderId        String
+  modifiedBy     String
+  actionType     String
+  previousValues Json?
+  updatedValues  Json?
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model Requirement {
