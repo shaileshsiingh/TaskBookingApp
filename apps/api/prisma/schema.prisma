@@ -261,6 +261,16 @@ model BookingHistory {
   @@index([orderId, createdAt])
 }
 
+// Singleton row (id is always "default") holding admin-configurable
+// platform-wide policy, so values like the cancellation fee don't need a
+// code deploy to change (SRS 6.7/6.9's "configurable through the admin panel").
+model PlatformSettings {
+  id                            String @id @default("default")
+  cancellationFeeWindowMinutes  Int    @default(120)
+  cancellationFeeRate           Float  @default(0.1)
+  updatedAt                     DateTime @updatedAt
+}
+
 model Requirement {
   id          String       @id @default(cuid())
   orderId     String

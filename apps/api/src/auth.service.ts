@@ -21,6 +21,8 @@ type ProfileInput = {
   role?: unknown;
   serviceArea?: unknown;
   serviceIds?: unknown;
+  ageYears?: unknown;
+  experienceYears?: unknown;
 };
 
 type Identity = {
@@ -331,6 +333,23 @@ export class AuthService {
       throw new BadRequestException('Choose at least one service you provide.');
     }
 
+    let ageYears: number | undefined;
+    if (input.ageYears !== undefined && input.ageYears !== '') {
+      const age = Number(input.ageYears);
+      if (!Number.isInteger(age) || age < 18 || age > 100) {
+        throw new BadRequestException('Enter a valid age between 18 and 100.');
+      }
+      ageYears = age;
+    }
+    let experienceYears: number | undefined;
+    if (input.experienceYears !== undefined && input.experienceYears !== '') {
+      const experience = Number(input.experienceYears);
+      if (!Number.isInteger(experience) || experience < 0 || experience > 80) {
+        throw new BadRequestException('Enter a valid number of years of experience.');
+      }
+      experienceYears = experience;
+    }
+
     const services = await this.prisma.service.findMany({
       where: { id: { in: serviceIds }, active: true },
       select: { id: true },
@@ -348,6 +367,8 @@ export class AuthService {
         providerProfile: {
           create: {
             serviceArea,
+            ageYears,
+            experienceYears,
             skills: {
               create: serviceIds.map((serviceId) => ({
                 service: { connect: { id: serviceId } },

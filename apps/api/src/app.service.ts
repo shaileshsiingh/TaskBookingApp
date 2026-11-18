@@ -84,6 +84,30 @@ async function withSerializableRetry<T>(
   return undefined;
 }
 
+/**
+ * Appends an audit-trail row for a booking (SRS 6.9/12.8/BR-23). Takes
+ * either the main Prisma client or a transaction client so a history entry
+ * can be recorded atomically alongside the change it describes.
+ */
+async function recordHistory(
+  client: PrismaService | TransactionClient,
+  orderId: string,
+  modifiedBy: string,
+  actionType: string,
+  previousValues?: Record<string, unknown>,
+  updatedValues?: Record<string, unknown>,
+): Promise<void> {
+  await client.bookingHistory.create({
+    data: {
+      orderId,
+      modifiedBy,
+      actionType,
+      previousValues: previousValues as Prisma.InputJsonValue | undefined,
+      updatedValues: updatedValues as Prisma.InputJsonValue | undefined,
+    },
+  });
+}
+
 type ProviderInput = {
   name?: unknown;
   phone?: unknown;
@@ -230,6 +254,9 @@ export class AppService {
         price: service.unitPricePaise / 100,
         pricingModel: service.pricingModel,
         active: service.active,
+        standardDurationHours: service.standardDurationMinutes / 60,
+        overtimeRatePerHour:
+          service.overtimeRatePaise != null ? service.overtimeRatePaise / 100 : undefined,
       })),
     };
   }
@@ -286,6 +313,8 @@ export class AppService {
     description?: unknown;
     pricingModel?: unknown;
     price?: unknown;
+    standardDurationHours?: unknown;
+    overtimeRatePerHour?: unknown;
   }) {
     const categoryId = typeof input.categoryId === 'string' ? input.categoryId.trim() : '';
     const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -300,6 +329,24 @@ export class AppService {
       throw new BadRequestException('price must be a positive number.');
     }
 
+    let standardDurationMinutes = 480;
+    if (input.standardDurationHours !== undefined && input.standardDurationHours !== '') {
+      const hours = Number(input.standardDurationHours);
+      if (!Number.isFinite(hours) || hours <= 0) {
+        throw new BadRequestException('standardDurationHours must be a positive number.');
+      }
+      standardDurationMinutes = Math.round(hours * 60);
+    }
+
+    let overtimeRatePaise: number | null = null;
+    if (input.overtimeRatePerHour !== undefined && input.overtimeRatePerHour !== '') {
+      const rate = Number(input.overtimeRatePerHour);
+      if (!Number.isFinite(rate) || rate < 0) {
+        throw new BadRequestException('overtimeRatePerHour must be zero or a positive number.');
+      }
+      overtimeRatePaise = Math.round(rate * 100);
+    }
+
     const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
     if (!category) throw new BadRequestException(`Unknown categoryId: ${categoryId}`);
 
@@ -310,6 +357,8 @@ export class AppService {
         description: description || null,
         pricingModel,
         unitPricePaise: Math.round(price * 100),
+        standardDurationMinutes,
+        overtimeRatePaise,
       },
       include: { category: { select: { id: true, name: true } } },
     });
@@ -322,6 +371,9 @@ export class AppService {
       price: service.unitPricePaise / 100,
       pricingModel: service.pricingModel,
       active: service.active,
+      standardDurationHours: service.standardDurationMinutes / 60,
+      overtimeRatePerHour:
+        service.overtimeRatePaise != null ? service.overtimeRatePaise / 100 : undefined,
     };
   }
 
@@ -333,6 +385,8 @@ export class AppService {
       pricingModel?: unknown;
       price?: unknown;
       active?: unknown;
+      standardDurationHours?: unknown;
+      overtimeRatePerHour?: unknown;
     },
   ) {
     const data: {
@@ -341,6 +395,8 @@ export class AppService {
       pricingModel?: Prisma.ServiceUpdateInput['pricingModel'];
       unitPricePaise?: number;
       active?: boolean;
+      standardDurationMinutes?: number;
+      overtimeRatePaise?: number | null;
     } = {};
 
     if (input.name !== undefined) {
@@ -370,6 +426,25 @@ export class AppService {
       }
       data.active = input.active;
     }
+    if (input.standardDurationHours !== undefined) {
+      const hours = Number(input.standardDurationHours);
+      if (!Number.isFinite(hours) || hours <= 0) {
+        throw new BadRequestException('standardDurationHours must be a positive number.');
+      }
+      data.standardDurationMinutes = Math.round(hours * 60);
+    }
+    if (input.overtimeRatePerHour !== undefined) {
+      const rateInput = input.overtimeRatePerHour;
+      if (rateInput === '' || rateInput === null) {
+        data.overtimeRatePaise = null;
+      } else {
+        const rate = Number(rateInput);
+        if (!Number.isFinite(rate) || rate < 0) {
+          throw new BadRequestException('overtimeRatePerHour must be zero or a positive number.');
+        }
+        data.overtimeRatePaise = Math.round(rate * 100);
+      }
+    }
     if (Object.keys(data).length === 0) {
       throw new BadRequestException('Provide at least one field to update.');
     }
@@ -388,6 +463,9 @@ export class AppService {
         price: service.unitPricePaise / 100,
         pricingModel: service.pricingModel,
         active: service.active,
+        standardDurationHours: service.standardDurationMinutes / 60,
+        overtimeRatePerHour:
+          service.overtimeRatePaise != null ? service.overtimeRatePaise / 100 : undefined,
       };
     } catch (error) {
       if (
@@ -410,6 +488,60 @@ export class AppService {
       );
     }
     return value as PricingModel;
+  }
+
+  private async getCancellationPolicy(): Promise<{ windowMinutes: number; rate: number }> {
+    const settings = await this.prisma.platformSettings.findUnique({ where: { id: 'default' } });
+    return {
+      windowMinutes: settings?.cancellationFeeWindowMinutes ?? CANCELLATION_FEE_WINDOW_MINUTES,
+      rate: settings?.cancellationFeeRate ?? CANCELLATION_FEE_RATE,
+    };
+  }
+
+  async getPlatformSettings() {
+    const settings = await this.prisma.platformSettings.findUnique({ where: { id: 'default' } });
+    return {
+      cancellationFeeWindowMinutes:
+        settings?.cancellationFeeWindowMinutes ?? CANCELLATION_FEE_WINDOW_MINUTES,
+      cancellationFeeRatePercent: (settings?.cancellationFeeRate ?? CANCELLATION_FEE_RATE) * 100,
+    };
+  }
+
+  async updatePlatformSettings(input: {
+    cancellationFeeWindowMinutes?: unknown;
+    cancellationFeeRatePercent?: unknown;
+  }) {
+    const data: { cancellationFeeWindowMinutes?: number; cancellationFeeRate?: number } = {};
+
+    if (input.cancellationFeeWindowMinutes !== undefined) {
+      const minutes = Number(input.cancellationFeeWindowMinutes);
+      if (!Number.isFinite(minutes) || minutes < 0) {
+        throw new BadRequestException(
+          'cancellationFeeWindowMinutes must be zero or a positive number.',
+        );
+      }
+      data.cancellationFeeWindowMinutes = Math.round(minutes);
+    }
+    if (input.cancellationFeeRatePercent !== undefined) {
+      const percent = Number(input.cancellationFeeRatePercent);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        throw new BadRequestException('cancellationFeeRatePercent must be between 0 and 100.');
+      }
+      data.cancellationFeeRate = percent / 100;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Provide at least one setting to update.');
+    }
+
+    const settings = await this.prisma.platformSettings.upsert({
+      where: { id: 'default' },
+      update: data,
+      create: { id: 'default', ...data },
+    });
+    return {
+      cancellationFeeWindowMinutes: settings.cancellationFeeWindowMinutes,
+      cancellationFeeRatePercent: settings.cancellationFeeRate * 100,
+    };
   }
 
   async getCustomers() {
@@ -580,6 +712,7 @@ export class AppService {
   }
 
   async cancelOrder(customerId: string, orderId: string) {
+    const cancellationPolicy = await this.getCancellationPolicy();
     const activeAssignmentStatusesForCancellation: AssignmentStatus[] = [
       AssignmentStatus.OFFERED,
       AssignmentStatus.ACCEPTED,
@@ -610,8 +743,8 @@ export class AppService {
 
         const minutesUntilScheduled = (order.scheduledAt.getTime() - Date.now()) / 60_000;
         const cancellationFeePaise =
-          minutesUntilScheduled <= CANCELLATION_FEE_WINDOW_MINUTES
-            ? Math.round((order.totalAmountPaise ?? 0) * CANCELLATION_FEE_RATE)
+          minutesUntilScheduled <= cancellationPolicy.windowMinutes
+            ? Math.round((order.totalAmountPaise ?? 0) * cancellationPolicy.rate)
             : 0;
 
         await transaction.order.update({
@@ -629,6 +762,9 @@ export class AppService {
           },
           data: { status: AssignmentStatus.CANCELLED },
         });
+        await recordHistory(transaction, order.id, customerId, 'cancelled', {
+          status: order.status,
+        }, { status: OrderStatus.CANCELLED, cancellationFeePaise });
 
         const affectedProviderIds = order.assignments
           .filter((assignment) =>
@@ -649,6 +785,85 @@ export class AppService {
     this.realtime.notifyUsers([customerId, ...result.affectedProviderIds]);
     const { affectedProviderIds: _affectedProviderIds, ...response } = result;
     return response;
+  }
+
+  /**
+   * Lets a customer change a booking's date, time, and/or venue (SRS 2.9).
+   * Always allowed up to a terminal status -- unlike personnel/service
+   * changes, which this endpoint intentionally does not support; once a
+   * partner has accepted, the only way to add/remove people or services is
+   * a separate booking, same as the SRS's own fallback wording. If any
+   * partner has already accepted, they're notified of the change rather
+   * than required to reconfirm (a fuller reconfirmation workflow is a
+   * reasonable future addition, not built here).
+   */
+  async updateBookingDetails(
+    customerId: string,
+    orderId: string,
+    input: { date?: unknown; time?: unknown; address?: unknown },
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, customerId },
+      include: { assignments: { select: { status: true, providerId: true } } },
+    });
+    if (!order) throw new NotFoundException('Booking was not found.');
+    if ((terminalOrderStatuses as readonly OrderStatus[]).includes(order.status)) {
+      throw new BadRequestException('This booking can no longer be modified.');
+    }
+
+    const data: { scheduledAt?: Date; address?: string } = {};
+    const previousValues: Record<string, unknown> = {};
+    const updatedValues: Record<string, unknown> = {};
+
+    if (input.date !== undefined || input.time !== undefined) {
+      const date = typeof input.date === 'string' ? input.date.trim() : '';
+      const time = typeof input.time === 'string' ? input.time.trim() : '';
+      if (!date || !time) {
+        throw new BadRequestException('Provide both date and time together to reschedule.');
+      }
+      const scheduledAt = dateTimeInIndia(date, time);
+      previousValues.scheduledAt = order.scheduledAt.toISOString();
+      data.scheduledAt = scheduledAt;
+      updatedValues.scheduledAt = scheduledAt.toISOString();
+    }
+    if (input.address !== undefined) {
+      const address = typeof input.address === 'string' ? input.address.trim() : '';
+      if (!address) throw new BadRequestException('address cannot be empty.');
+      previousValues.address = order.address;
+      data.address = address;
+      updatedValues.address = address;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Provide a new date and time, and/or a new address.');
+    }
+
+    const acceptedProviderIds = order.assignments
+      .filter((assignment) => securedAssignmentStatuses.has(assignment.status))
+      .map((assignment) => assignment.providerId);
+
+    const updated = await this.prisma.order.update({ where: { id: order.id }, data });
+    await recordHistory(
+      this.prisma,
+      order.id,
+      customerId,
+      'booking_modified',
+      previousValues,
+      updatedValues,
+    );
+
+    this.realtime.notifyUsers([customerId, ...acceptedProviderIds]);
+
+    const dateTime = formatIndiaDateTime(updated.scheduledAt);
+    return {
+      id: updated.id,
+      date: dateTime.date,
+      time: dateTime.time,
+      address: updated.address,
+      message:
+        acceptedProviderIds.length > 0
+          ? 'Booking updated. The assigned partner(s) have been notified of the change.'
+          : 'Booking updated.',
+    };
   }
 
   async raiseDispute(customerId: string, orderId: string, reasonInput: unknown) {
@@ -710,6 +925,9 @@ export class AppService {
         where: { id: order.id },
         data: { status: OrderStatus.COMPLETED, resolutionNote: note || null },
       });
+      await recordHistory(this.prisma, order.id, 'admin', 'dispute_dismissed', {
+        status: order.status,
+      }, { status: updated.status, resolutionNote: updated.resolutionNote });
       this.realtime.notifyUsers([order.customerId]);
       return { id: updated.id, status: statusLabels[updated.status] };
     }
@@ -732,6 +950,9 @@ export class AppService {
         resolutionNote: note || null,
       },
     });
+    await recordHistory(this.prisma, order.id, 'admin', 'refunded', {
+      status: order.status,
+    }, { status: updated.status, refundAmountPaise, resolutionNote: updated.resolutionNote });
     this.realtime.notifyUsers([order.customerId]);
     return { id: updated.id, status: statusLabels[updated.status] };
   }
@@ -908,6 +1129,8 @@ export class AppService {
       serviceArea: profile.serviceArea,
       verified: profile.verified,
       available: profile.available,
+      ageYears: profile.ageYears ?? undefined,
+      experienceYears: profile.experienceYears ?? undefined,
       services: profile.skills.map((skill) => ({
         id: skill.service.id,
         name: skill.service.name,
@@ -1158,6 +1381,14 @@ export class AppService {
           if (updated.count !== 1) {
             throw new ConflictException('This assigned job changed. Refresh and try again.');
           }
+          await recordHistory(
+            transaction,
+            assignment.orderId,
+            providerId,
+            `assignment_${nextStatus.toLowerCase()}`,
+            { status: assignment.status },
+            { status: nextStatus, assignmentId: assignment.id },
+          );
 
           // Once accepting this one fills every slot on the requirement,
           // close out every other still-open offer so those providers see
@@ -1409,6 +1640,10 @@ export class AppService {
           },
           include: { provider: { select: { name: true } } },
         });
+        await recordHistory(transaction, orderId, 'admin', 'provider_assigned', undefined, {
+          requirementId: requirement.id,
+          providerId: provider.userId,
+        });
 
         const allAssignments = await transaction.assignment.findMany({
           where: { orderId },
@@ -1657,6 +1892,27 @@ export class AppService {
     }
 
     return booking;
+  }
+
+  async getBookingHistory(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true },
+    });
+    if (!order) throw new NotFoundException(`Booking "${orderId}" was not found.`);
+
+    const entries = await this.prisma.bookingHistory.findMany({
+      where: { orderId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return entries.map((entry) => ({
+      id: entry.id,
+      actionType: entry.actionType,
+      modifiedBy: entry.modifiedBy,
+      previousValues: entry.previousValues ?? undefined,
+      updatedValues: entry.updatedValues ?? undefined,
+      createdAt: entry.createdAt.toISOString(),
+    }));
   }
 
   async createBooking(input: BookingInput) {

@@ -180,6 +180,8 @@ export async function createService(formData: FormData) {
       description: formData.get("description"),
       pricingModel: formData.get("pricingModel"),
       price: formData.get("price"),
+      standardDurationHours: formData.get("standardDurationHours"),
+      overtimeRatePerHour: formData.get("overtimeRatePerHour"),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create service.";
@@ -203,6 +205,8 @@ export async function updateService(formData: FormData) {
       price: formData.get("price"),
       pricingModel: formData.get("pricingModel"),
       active: formData.get("active") === "true",
+      standardDurationHours: formData.get("standardDurationHours"),
+      overtimeRatePerHour: formData.get("overtimeRatePerHour"),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not update service.";
@@ -237,4 +241,21 @@ export async function resolveDispute(formData: FormData) {
   redirect(
     `/disputes?notice=${action === "refund" ? "dispute-refunded" : "dispute-dismissed"}`,
   );
+}
+
+export async function updatePlatformSettings(formData: FormData) {
+  if (!(await isAdminSessionValid())) redirect("/?error=admin-session");
+
+  try {
+    await requestAdminApi("/admin/settings", "PATCH", {
+      cancellationFeeWindowMinutes: formData.get("cancellationFeeWindowMinutes"),
+      cancellationFeeRatePercent: formData.get("cancellationFeeRatePercent"),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not save these settings.";
+    redirect(`/settings?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/settings");
+  redirect("/settings?notice=settings-updated");
 }

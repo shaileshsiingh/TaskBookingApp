@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { assignProvider, logoutAdmin } from "../../actions";
 import { fetchApi, formatPrice } from "../../admin-api";
 import SubmitButton from "../../SubmitButton";
@@ -105,7 +106,14 @@ export default async function BookingsPage({
                 <tbody>
                   {bookings.map((booking) => (
                     <tr key={booking.id}>
-                      <td>{booking.id}</td>
+                      <td>
+                        {booking.id}
+                        <div className={styles.timeCell}>
+                          <Link href={`/bookings/${encodeURIComponent(booking.id)}/history`}>
+                            View history
+                          </Link>
+                        </div>
+                      </td>
                       <td>{booking.customerName}</td>
                       <td>
                         {booking.requirements.map((requirement) => (

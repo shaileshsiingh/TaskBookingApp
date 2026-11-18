@@ -12,6 +12,8 @@ export type Provider = {
   serviceArea: string | null;
   verified: boolean;
   available: boolean;
+  ageYears?: number;
+  experienceYears?: number;
   services: { id: string; name: string }[];
 };
 
@@ -57,6 +59,8 @@ export type CatalogService = {
   price: number;
   pricingModel: string;
   active: boolean;
+  standardDurationHours: number;
+  overtimeRatePerHour?: number;
 };
 
 export type AdminCatalog = {
@@ -71,4 +75,18 @@ export type Customer = {
   joinedAt: string;
   bookingCount: number;
   lifetimeValue: number;
+};
+
+export type PlatformSettings = {
+  cancellationFeeWindowMinutes: number;
+  cancellationFeeRatePercent: number;
+};
+
+export type BookingHistoryEntry = {
+  id: string;
+  actionType: string;
+  modifiedBy: string;
+  previousValues?: Record<string, unknown>;
+  updatedValues?: Record<string, unknown>;
+  createdAt: string;
 };

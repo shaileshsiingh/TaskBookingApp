@@ -45,6 +45,12 @@ export class AppController {
     return this.appService.getBookingById(id);
   }
 
+  @Get('bookings/:id/history')
+  @UseGuards(AdminApiKeyGuard)
+  getBookingHistory(@Param('id') id: string) {
+    return this.appService.getBookingHistory(id);
+  }
+
   @Post('bookings/:id/assignments')
   @UseGuards(AdminApiKeyGuard)
   assignProvider(
@@ -86,6 +92,19 @@ export class AppController {
       throw new ForbiddenException('Only customer accounts can cancel their bookings.');
     }
     return this.appService.cancelOrder(user.id, id);
+  }
+
+  @Patch('customer/orders/:id')
+  async updateBookingDetails(
+    @Req() request: Request,
+    @Param('id') id: string,
+    @Body() input: { date?: unknown; time?: unknown; address?: unknown },
+  ) {
+    const user = await this.authService.getCurrentApplicationUser(request.headers);
+    if (user.role !== UserRole.CUSTOMER) {
+      throw new ForbiddenException('Only customer accounts can modify their bookings.');
+    }
+    return this.appService.updateBookingDetails(user.id, id, input);
   }
 
   @Post('customer/orders/:id/dispute')
@@ -271,5 +290,19 @@ export class AppController {
   @UseGuards(AdminApiKeyGuard)
   getCustomers() {
     return this.appService.getCustomers();
+  }
+
+  @Get('admin/settings')
+  @UseGuards(AdminApiKeyGuard)
+  getPlatformSettings() {
+    return this.appService.getPlatformSettings();
+  }
+
+  @Patch('admin/settings')
+  @UseGuards(AdminApiKeyGuard)
+  updatePlatformSettings(
+    @Body() input: { cancellationFeeWindowMinutes?: unknown; cancellationFeeRatePercent?: unknown },
+  ) {
+    return this.appService.updatePlatformSettings(input);
   }
 }

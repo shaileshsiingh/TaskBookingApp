@@ -82,6 +82,9 @@ describe('AppController', () => {
         provider: { name: 'Asha Provider' },
       }),
     },
+    bookingHistory: {
+      create: vi.fn().mockResolvedValue({}),
+    },
   };
 
   const prisma = {
@@ -94,6 +97,8 @@ describe('AppController', () => {
           description: 'Cleaning and routine support',
           unitPricePaise: 50000,
           pricingModel: 'HOURLY',
+          standardDurationMinutes: 480,
+          overtimeRatePaise: null,
           category: { id: 'home-support', name: 'Home support' },
         },
       ]),
@@ -105,6 +110,8 @@ describe('AppController', () => {
         unitPricePaise: 70000,
         pricingModel: 'PER_PERSON',
         active: true,
+        standardDurationMinutes: 480,
+        overtimeRatePaise: null,
         category: { id: 'home-support', name: 'Home support' },
       }),
       update: vi.fn().mockResolvedValue({
@@ -114,6 +121,8 @@ describe('AppController', () => {
         unitPricePaise: 60000,
         pricingModel: 'HOURLY',
         active: true,
+        standardDurationMinutes: 480,
+        overtimeRatePaise: null,
         category: { id: 'home-support', name: 'Home support' },
       }),
     },
@@ -183,6 +192,18 @@ describe('AppController', () => {
         line: '12, Green Park, Kondapur',
       }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    bookingHistory: {
+      create: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    platformSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({
+        id: 'default',
+        cancellationFeeWindowMinutes: 120,
+        cancellationFeeRate: 0.1,
+      }),
     },
     $transaction: vi.fn(async (callback: (transaction: typeof transaction) => unknown) =>
       callback(transaction),
@@ -614,6 +635,98 @@ describe('AppController', () => {
     });
   });
 
+  describe('booking modification (SRS 2.9)', () => {
+    it('reschedules a booking with no accepted partners yet', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'PENDING',
+        scheduledAt: new Date('2026-10-20T04:30:00.000Z'),
+        address: '12, Green Park, Kondapur',
+        assignments: [{ status: 'OFFERED', providerId: 'provider-a' }],
+      });
+      prisma.order.update.mockResolvedValueOnce({
+        id: 'order-123',
+        scheduledAt: new Date('2026-10-22T04:30:00.000Z'),
+        address: '12, Green Park, Kondapur',
+      });
+
+      await expect(
+        appController.updateBookingDetails({ headers: {} } as never, 'order-123', {
+          date: '2026-10-22',
+          time: '10:00 AM',
+        }),
+      ).resolves.toMatchObject({ id: 'order-123', date: '2026-10-22', message: 'Booking updated.' });
+      expect(realtimeGateway.notifyUsers).toHaveBeenCalledWith(['customer-123']);
+    });
+
+    it('notifies already-accepted partners when the schedule changes under them', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'ACCEPTED',
+        scheduledAt: new Date('2026-10-20T04:30:00.000Z'),
+        address: '12, Green Park, Kondapur',
+        assignments: [{ status: 'ACCEPTED', providerId: 'provider-a' }],
+      });
+      prisma.order.update.mockResolvedValueOnce({
+        id: 'order-123',
+        scheduledAt: new Date('2026-10-20T04:30:00.000Z'),
+        address: '45, New Address, Gachibowli',
+      });
+
+      await expect(
+        appController.updateBookingDetails({ headers: {} } as never, 'order-123', {
+          address: '45, New Address, Gachibowli',
+        }),
+      ).resolves.toMatchObject({
+        id: 'order-123',
+        address: '45, New Address, Gachibowli',
+        message: 'Booking updated. The assigned partner(s) have been notified of the change.',
+      });
+      expect(realtimeGateway.notifyUsers).toHaveBeenCalledWith(['customer-123', 'provider-a']);
+    });
+
+    it('rejects a reschedule with only a date and no time', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({
+        id: 'order-123',
+        status: 'PENDING',
+        scheduledAt: new Date('2026-10-20T04:30:00.000Z'),
+        address: '12, Green Park, Kondapur',
+        assignments: [],
+      });
+
+      await expect(
+        appController.updateBookingDetails({ headers: {} } as never, 'order-123', {
+          date: '2026-10-22',
+        }),
+      ).rejects.toThrow('Provide both date and time together to reschedule.');
+    });
+
+    it('blocks modifying a booking that is already in a terminal state', async () => {
+      prisma.order.findFirst.mockResolvedValueOnce({ id: 'order-123', status: 'COMPLETED' });
+
+      await expect(
+        appController.updateBookingDetails({ headers: {} } as never, 'order-123', {
+          address: 'New address',
+        }),
+      ).rejects.toThrow('This booking can no longer be modified.');
+    });
+
+    it('does not allow a provider account to modify a customer booking', async () => {
+      authService.getCurrentApplicationUser.mockResolvedValueOnce({
+        id: 'provider-123',
+        role: 'PROVIDER',
+        name: 'Asha Provider',
+        phone: '9988776655',
+      });
+
+      await expect(
+        appController.updateBookingDetails({ headers: {} } as never, 'order-123', {
+          address: 'New address',
+        }),
+      ).rejects.toThrow('Only customer accounts can modify their bookings.');
+    });
+  });
+
   describe('disputes and refunds', () => {
     it('lets a customer report an issue on a completed booking', async () => {
       prisma.order.findFirst.mockResolvedValueOnce({ id: 'order-123', status: 'COMPLETED' });
@@ -787,8 +900,38 @@ describe('AppController', () => {
             price: 500,
             pricingModel: 'HOURLY',
             active: undefined,
+            standardDurationHours: 8,
+            overtimeRatePerHour: undefined,
           },
         ],
+      });
+    });
+
+    it('falls back to the default cancellation policy when nothing has been configured', async () => {
+      await expect(appController.getPlatformSettings()).resolves.toEqual({
+        cancellationFeeWindowMinutes: 120,
+        cancellationFeeRatePercent: 10,
+      });
+    });
+
+    it('rejects an out-of-range cancellation fee percentage', async () => {
+      await expect(
+        appController.updatePlatformSettings({ cancellationFeeRatePercent: 150 }),
+      ).rejects.toThrow('cancellationFeeRatePercent must be between 0 and 100.');
+      expect(prisma.platformSettings.upsert).not.toHaveBeenCalled();
+    });
+
+    it('saves an updated cancellation policy', async () => {
+      await expect(
+        appController.updatePlatformSettings({
+          cancellationFeeWindowMinutes: 180,
+          cancellationFeeRatePercent: 15,
+        }),
+      ).resolves.toEqual({ cancellationFeeWindowMinutes: 120, cancellationFeeRatePercent: 10 });
+      expect(prisma.platformSettings.upsert).toHaveBeenCalledWith({
+        where: { id: 'default' },
+        update: { cancellationFeeWindowMinutes: 180, cancellationFeeRate: 0.15 },
+        create: { id: 'default', cancellationFeeWindowMinutes: 180, cancellationFeeRate: 0.15 },
       });
     });
 

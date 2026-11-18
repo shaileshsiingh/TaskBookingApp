@@ -26,6 +26,8 @@ export type AuthProfileInput = {
   role: AccountRole;
   serviceArea?: string;
   serviceIds?: string[];
+  ageYears?: number;
+  experienceYears?: number;
 };
 
 type AuthScreenProps = {
@@ -48,6 +50,8 @@ export default function AuthScreen({
   const [profileSetupRequired, setProfileSetupRequired] = useState(false);
   const [code, setCode] = useState('');
   const [serviceArea, setServiceArea] = useState('');
+  const [age, setAge] = useState('');
+  const [experience, setExperience] = useState('');
   const [services, setServices] = useState<Service[]>([]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [isLoadingServices, setIsLoadingServices] = useState(false);
@@ -126,7 +130,12 @@ export default function AuthScreen({
       phone: phoneNumber,
       role,
       ...(role === 'PROVIDER'
-        ? { serviceArea: serviceArea.trim(), serviceIds: selectedServiceIds }
+        ? {
+            serviceArea: serviceArea.trim(),
+            serviceIds: selectedServiceIds,
+            ...(age.trim() ? { ageYears: Number(age.trim()) } : {}),
+            ...(experience.trim() ? { experienceYears: Number(experience.trim()) } : {}),
+          }
         : {}),
     });
   };
@@ -447,6 +456,34 @@ export default function AuthScreen({
                 style={styles.input}
                 value={serviceArea}
               />
+              <View style={styles.providerDetailRow}>
+                <View style={styles.providerDetailColumn}>
+                  <Text style={styles.fieldLabel}>AGE (OPTIONAL)</Text>
+                  <TextInput
+                    accessibilityLabel="Your age"
+                    keyboardType="number-pad"
+                    maxLength={3}
+                    onChangeText={(value) => setAge(value.replace(/\D/g, ''))}
+                    placeholder="e.g. 28"
+                    placeholderTextColor="#959ea8"
+                    style={styles.input}
+                    value={age}
+                  />
+                </View>
+                <View style={styles.providerDetailColumn}>
+                  <Text style={styles.fieldLabel}>EXPERIENCE, YEARS (OPTIONAL)</Text>
+                  <TextInput
+                    accessibilityLabel="Years of experience"
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onChangeText={(value) => setExperience(value.replace(/\D/g, ''))}
+                    placeholder="e.g. 3"
+                    placeholderTextColor="#959ea8"
+                    style={styles.input}
+                    value={experience}
+                  />
+                </View>
+              </View>
               <Text style={styles.fieldLabel}>SERVICES YOU PROVIDE</Text>
               {isLoadingServices ? (
                 <ActivityIndicator color="#3d546f" style={styles.loader} />
@@ -668,6 +705,8 @@ const styles = StyleSheet.create({
     minHeight: 45,
     paddingHorizontal: 12,
   },
+  providerDetailRow: { flexDirection: 'row', gap: 10 },
+  providerDetailColumn: { flex: 1 },
   countryCode: {
     borderRightColor: '#e3e7eb',
     borderRightWidth: 1,

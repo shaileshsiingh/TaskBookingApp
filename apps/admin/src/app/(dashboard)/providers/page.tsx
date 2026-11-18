@@ -62,7 +62,14 @@ export default async function ProvidersPage({
               {providers.map((provider) => (
                 <article className={styles.providerCard} key={provider.id}>
                   <div className={styles.providerHeading}>
-                    <div><strong>{provider.name}</strong><div className={styles.timeCell}>{provider.phone} · {provider.serviceArea}</div></div>
+                    <div>
+                      <strong>{provider.name}</strong>
+                      <div className={styles.timeCell}>
+                        {provider.phone} · {provider.serviceArea}
+                        {provider.ageYears ? ` · ${provider.ageYears} yrs old` : ""}
+                        {provider.experienceYears !== undefined ? ` · ${provider.experienceYears} yrs experience` : ""}
+                      </div>
+                    </div>
                     <span className={`${styles.statusPill} ${provider.verified ? styles.statusAssigned : styles.statusPending}`}>
                       {provider.verified ? "verified" : "pending review"}
                     </span>

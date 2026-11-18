@@ -96,6 +96,30 @@ export default async function ServicesPage({
                       <option key={model} value={model}>{pricingModelLabels[model]}</option>
                     ))}
                   </select>
+                  <label className={styles.fieldLabel} htmlFor={`duration-${service.id}`}>STANDARD DURATION (HOURS)</label>
+                  <input
+                    className={styles.textInput}
+                    defaultValue={service.standardDurationHours}
+                    id={`duration-${service.id}`}
+                    inputMode="decimal"
+                    min={0.5}
+                    name="standardDurationHours"
+                    required
+                    step="0.5"
+                    type="number"
+                  />
+                  <label className={styles.fieldLabel} htmlFor={`overtime-${service.id}`}>OVERTIME RATE (₹ / HOUR / PERSON)</label>
+                  <input
+                    className={styles.textInput}
+                    defaultValue={service.overtimeRatePerHour ?? ""}
+                    id={`overtime-${service.id}`}
+                    inputMode="decimal"
+                    min={0}
+                    name="overtimeRatePerHour"
+                    placeholder="Leave blank to disable overtime"
+                    step="0.01"
+                    type="number"
+                  />
                   <label className={styles.checkboxRow}>
                     <input defaultChecked={service.active} name="active" type="checkbox" value="true" />
                     Active (bookable by customers)
@@ -135,6 +159,27 @@ export default async function ServicesPage({
                 min={1}
                 name="price"
                 required
+                step="0.01"
+                type="number"
+              />
+              <label className={styles.fieldLabel} htmlFor="service-duration">STANDARD DURATION (HOURS)</label>
+              <input
+                className={styles.textInput}
+                defaultValue={8}
+                id="service-duration"
+                inputMode="decimal"
+                min={0.5}
+                name="standardDurationHours"
+                step="0.5"
+                type="number"
+              />
+              <label className={styles.fieldLabel} htmlFor="service-overtime">OVERTIME RATE (₹ / HOUR / PERSON, OPTIONAL)</label>
+              <input
+                className={styles.textInput}
+                id="service-overtime"
+                inputMode="decimal"
+                min={0}
+                name="overtimeRatePerHour"
                 step="0.01"
                 type="number"
               />

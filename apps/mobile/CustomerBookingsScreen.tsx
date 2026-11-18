@@ -113,6 +113,11 @@ export default function CustomerBookingsScreen({
   const [reportingId, setReportingId] = useState<string | null>(null);
   const [disputeReasons, setDisputeReasons] = useState<Record<string, string>>({});
   const [submittingDisputeId, setSubmittingDisputeId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDrafts, setEditDrafts] = useState<
+    Record<string, { date: string; time: string; address: string }>
+  >({});
+  const [savingEditId, setSavingEditId] = useState<string | null>(null);
   const [error, setError] = useState(authError);
   const syncPulse = useRef(new Animated.Value(0)).current;
 
@@ -244,6 +249,50 @@ export default function CustomerBookingsScreen({
       );
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const openEdit = (booking: CustomerBooking) => {
+    setEditDrafts((current) => ({
+      ...current,
+      [booking.id]: { date: booking.date, time: booking.time, address: booking.address },
+    }));
+    setEditingId(booking.id);
+    setError('');
+  };
+
+  const submitBookingEdit = async (bookingId: string) => {
+    const draft = editDrafts[bookingId];
+    if (!draft) return;
+    if (!draft.date.trim() || !draft.time.trim() || !draft.address.trim()) {
+      setError('Date, time, and address are all required.');
+      return;
+    }
+    setSavingEditId(bookingId);
+    setError('');
+    try {
+      await authenticatedFetch(
+        `${apiBaseUrl}/customer/orders/${encodeURIComponent(bookingId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: draft.date.trim(),
+            time: draft.time.trim(),
+            address: draft.address.trim(),
+          }),
+        },
+      );
+      setEditingId(null);
+      await loadBookings(true);
+    } catch (editError) {
+      setError(
+        editError instanceof Error
+          ? editError.message
+          : 'Could not update this booking. Please try again.',
+      );
+    } finally {
+      setSavingEditId(null);
     }
   };
 
@@ -511,18 +560,88 @@ export default function CustomerBookingsScreen({
               ))}
 
               {!uncancellableStatuses.has(booking.status) ? (
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={cancellingId === booking.id}
-                  onPress={() => cancelBooking(booking.id)}
-                  style={styles.cancelButton}
-                >
-                  <Text style={styles.cancelText}>
-                    {cancellingId === booking.id
-                      ? 'Cancelling…'
-                      : 'Cancel booking'}
-                  </Text>
-                </Pressable>
+                editingId === booking.id ? (
+                  <View style={styles.editForm}>
+                    <Text style={styles.fieldLabel}>DATE</Text>
+                    <TextInput
+                      accessibilityLabel="New date"
+                      onChangeText={(value) =>
+                        setEditDrafts((current) => ({
+                          ...current,
+                          [booking.id]: { ...current[booking.id], date: value },
+                        }))
+                      }
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#959ea8"
+                      style={styles.editInput}
+                      value={editDrafts[booking.id]?.date ?? ''}
+                    />
+                    <Text style={styles.fieldLabel}>TIME</Text>
+                    <TextInput
+                      accessibilityLabel="New time"
+                      onChangeText={(value) =>
+                        setEditDrafts((current) => ({
+                          ...current,
+                          [booking.id]: { ...current[booking.id], time: value },
+                        }))
+                      }
+                      placeholder="e.g. 10:00 AM"
+                      placeholderTextColor="#959ea8"
+                      style={styles.editInput}
+                      value={editDrafts[booking.id]?.time ?? ''}
+                    />
+                    <Text style={styles.fieldLabel}>ADDRESS</Text>
+                    <TextInput
+                      accessibilityLabel="New address"
+                      onChangeText={(value) =>
+                        setEditDrafts((current) => ({
+                          ...current,
+                          [booking.id]: { ...current[booking.id], address: value },
+                        }))
+                      }
+                      placeholder="Service address"
+                      placeholderTextColor="#959ea8"
+                      style={styles.editInput}
+                      value={editDrafts[booking.id]?.address ?? ''}
+                    />
+                    <View style={styles.disputeFormActions}>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => setEditingId(null)}
+                        style={styles.disputeCancelButton}
+                      >
+                        <Text style={styles.disputeCancelText}>Never mind</Text>
+                      </Pressable>
+                      <ActionButton
+                        disabled={savingEditId === booking.id}
+                        label={savingEditId === booking.id ? 'Saving…' : 'Save changes'}
+                        onPress={() => void submitBookingEdit(booking.id)}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.bookingActionsRow}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => openEdit(booking)}
+                      style={styles.editButton}
+                    >
+                      <Text style={styles.editButtonText}>Edit date, time, or address</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={cancellingId === booking.id}
+                      onPress={() => cancelBooking(booking.id)}
+                      style={styles.cancelButton}
+                    >
+                      <Text style={styles.cancelText}>
+                        {cancellingId === booking.id
+                          ? 'Cancelling…'
+                          : 'Cancel booking'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )
               ) : null}
 
               {booking.status === 'disputed' && booking.disputeReason ? (
@@ -748,16 +867,50 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     marginTop: 6,
   },
+  bookingActionsRow: { flexDirection: 'row', gap: 10, marginTop: 15 },
   cancelButton: {
     alignItems: 'center',
     borderColor: '#e7c4ba',
     borderRadius: 10,
     borderWidth: 1,
-    marginTop: 15,
+    flex: 1,
     minHeight: 42,
     justifyContent: 'center',
   },
   cancelText: { color: '#a44338', fontSize: 12, fontWeight: '700' },
+  editButton: {
+    alignItems: 'center',
+    backgroundColor: '#e9eef4',
+    borderRadius: 10,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  editButtonText: { color: '#3d546f', fontSize: 12, fontWeight: '700' },
+  editForm: {
+    backgroundColor: '#f5f6f8',
+    borderRadius: 11,
+    marginTop: 15,
+    padding: 12,
+  },
+  fieldLabel: {
+    color: '#89939f',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  editInput: {
+    backgroundColor: '#fff',
+    borderColor: '#e3e7eb',
+    borderRadius: 9,
+    borderWidth: 1,
+    color: '#27303c',
+    fontSize: 12,
+    marginBottom: 8,
+    minHeight: 42,
+    paddingHorizontal: 10,
+  },
   reportButton: {
     alignItems: 'center',
     marginTop: 10,
