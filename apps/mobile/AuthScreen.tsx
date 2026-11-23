@@ -141,6 +141,11 @@ export default function AuthScreen({
   };
 
   const submitEmailPassword = async () => {
+    console.log('[auth] submitEmailPassword tapped', {
+      isSignIn,
+      profileSetupRequired,
+      apiBaseUrl,
+    });
     setError('');
     if (!email.trim() || !password) {
       setError('Enter your email address and password.');
@@ -177,14 +182,19 @@ export default function AuthScreen({
     setIsVerifying(true);
     try {
       if (isSignIn && !profileSetupRequired) {
+        console.log('[auth] calling authClient.signIn.email...');
         const result = await authClient.signIn.email({
           email: email.trim(),
           password,
         });
+        console.log('[auth] signIn.email result', JSON.stringify(result));
         if (result.error) throw new Error(result.error.message);
         try {
+          console.log('[auth] calling onAuthenticated...');
           await onAuthenticated();
+          console.log('[auth] onAuthenticated succeeded');
         } catch (profileError) {
+          console.log('[auth] onAuthenticated threw', profileError);
           setProfileSetupRequired(true);
           throw profileError;
         }
@@ -197,11 +207,13 @@ export default function AuthScreen({
           password,
           name: name.trim(),
         });
+        console.log('[auth] signUp.email result', JSON.stringify(result));
         if (result.error) throw new Error(result.error.message);
         setProfileSetupRequired(true);
       }
       await finishSignIn();
     } catch (authError) {
+      console.log('[auth] caught error', authError);
       setError(
         authError instanceof Error
           ? authError.message
